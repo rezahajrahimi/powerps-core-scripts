@@ -25,9 +25,13 @@ sudo apt-get install -y php8.3 php8.3-fpm php8.3-mysql php8.3-curl php8.3-gd php
 # Copy bolt.so extension to PHP extensions directory
 sudo cp "${INSTALL_DIR}/bolt.so" /usr/lib/php/20230831/
 
-# Add bolt.so extension to main php.ini
-sudo echo "extension=bolt.so" | sudo tee -a /etc/php/8.3/apache2/php.ini
+# Get the location of the php.ini file
+PHP_INI_FILE=$(php --ini | grep "Loaded Configuration File" | cut -d ":" -f 2- | tr -d " ")
 
+# Add bolt.so extension to main php.ini
+sudo echo "extension=bolt.so" | sudo tee -a "${PHP_INI_FILE}"
+
+# ...
 # Install other dependencies
 sudo apt-get install -y git composer apache2 mysql-server
 
