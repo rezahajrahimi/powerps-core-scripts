@@ -69,6 +69,10 @@ if [ -d "/var/www/html/laravel-app" ]; then
 
     # Get the location of the php.ini file
     PHP_INI_FILE=$(php --ini | grep "Loaded Configuration File" | cut -d ":" -f 2- | tr -d " ")
+    
+        echo -e "${GREEN}Installing Composer dependencies...${NC}"
+    composer install
+
     # Run migrations
     echo -e "${GREEN}Running migrations...${NC}"
     php artisan migrate
@@ -87,6 +91,9 @@ else
 
     # Prompt user for .env variables only if .env does not exist
     if [ ! -f ".env" ]; then
+        echo -e "${GREEN}Installing Composer dependencies...${NC}"
+    composer install
+
         echo -e "${CYAN}Please enter the following environment variables for your Laravel project:${NC}"
         read -p "App Name: " APP_NAME
         read -p "Environment (local/production): " APP_ENV
@@ -119,8 +126,10 @@ else
         echo "TELEGRAM_ADMIN_ID=${TELEGRAM_ADMIN_ID}" >> .env
         echo "ZARINPAL_MERCHANT_ID=${ZARINPAL_MERCHANT_ID}" >> .env
         echo "FRONT_URL=${FRONT_URL}" >> .env
+        
 
         # Generate app key
+
         echo -e "${GREEN}Generating app key...${NC}"
         php artisan key:generate
 
@@ -146,8 +155,6 @@ else
         sudo systemctl restart apache2
     fi
 fi
-    echo -e "${GREEN}Installing Composer dependencies...${NC}"
-    composer install
 
 
 # Set up Apache virtual host for Laravel
