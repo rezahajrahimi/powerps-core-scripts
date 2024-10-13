@@ -17,7 +17,7 @@ sudo apt-get update
 
 # Installing necessary packages
 echo -e "${GREEN}Installing necessary packages...${NC}"
-sudo apt-get install -y apache2 mysql-server php8.3 php8.3-mysql libapache2-mod-php8.3 php8.3-cli php8.3-zip php8.3-xml php8.3-mbstring php8.3-curl composer unzip git expect
+sudo apt-get install -y apache2 mysql-server php8.3 php8.3-mysql libapache2-mod-php8.3 php8.3-cli php8.3-zip php8.3-xml php8.3-mbstring php8.3-curl php8.3-gd composer unzip git expect
 
 
 
