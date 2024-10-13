@@ -13,7 +13,6 @@ INSTALL_DIR="/var/www/html/${APP_NAME}"
 HTML_DIR="${INSTALL_DIR}/html"
 COMPOSER_DIR="${INSTALL_DIR}/composer"
 LOG_DIR="${INSTALL_DIR}/logs"
-APACHE_CONF="./apache.conf" # fix: provide full path to apache.conf
 
 # Install PHP 8.3 with necessary extensions
 sudo add-apt-repository ppa:ondrej/php
@@ -54,8 +53,24 @@ if [ -f "/etc/apache2/sites-available/${APP_NAME}.conf" ]; then
   exit 1
 fi
 
+# Create default Apache configuration file
+sudo tee /etc/apache2/sites-available/${APP_NAME}.conf <<EOF
+<VirtualHost *:80>
+    ServerName ${APP_NAME}.localhost
+    DocumentRoot ${INSTALL_DIR}/public
+
+    <Directory ${INSTALL_DIR}/public>
+        Options Indexes FollowSymLinks MultiViews
+        AllowOverride All
+        Require all granted
+    </Directory>
+
+    ErrorLog ${LOG_DIR}/error.log
+    CustomLog ${LOG_DIR}/access.log combined
+</VirtualHost>
+EOF
+
 # Configure apache
-sudo cp "${APACHE_CONF}" /etc/apache2/sites-available/
 sudo a2ensite "${APP_NAME}"
 sudo service apache2 restart
 
