@@ -8,8 +8,52 @@ NC='\033[0m' # No Color
 
 # Pretty title
 echo -e "${CYAN}==============================${NC}"
-echo -e "${YELLOW}  Setting up or Updating your Laravel Project${NC}"
+echo -e "${YELLOW}  Setting up or Updating your PowerPS${NC}"
 echo -e "${CYAN}==============================${NC}"
+
+# Updating package lists
+echo -e "${GREEN}Updating package lists...${NC}"
+sudo apt-get update
+
+# Installing necessary packages
+echo -e "${GREEN}Installing necessary packages...${NC}"
+sudo apt-get install -y apache2 mysql-server php8.3 php8.3-mysql libapache2-mod-php8.3 php8.3-cli php8.3-zip php8.3-xml php8.3-mbstring php8.3-curl composer unzip git expect
+
+# Secure MySQL Installation using expect
+echo -e "${GREEN}Securing MySQL Installation...${NC}"
+SECURE_MYSQL=$(expect -c "
+set timeout 10
+spawn sudo mysql_secure_installation
+expect \"VALIDATE PASSWORD COMPONENT can be used to test passwords\"
+send \"n\r\"
+expect \"New password:\"
+send \"yourpassword\r\"
+expect \"Re-enter new password:\"
+send \"yourpassword\r\"
+expect \"Do you wish to continue with the password provided?\"
+send \"y\r\"
+expect \"Remove anonymous users?\"
+send \"y\r\"
+expect \"Disallow root login remotely?\"
+send \"y\r\"
+expect \"Remove test database and access to it?\"
+send \"y\r\"
+expect \"Reload privilege tables now?\"
+send \"y\r\"
+expect eof
+")
+
+echo "$SECURE_MYSQL"
+
+# Create MySQL database and user
+DB_NAME='laravel_db'
+DB_USER='laravel_user'
+DB_PASS='password'
+echo -e "${GREEN}Creating MySQL database and user...${NC}"
+sudo mysql -e "CREATE DATABASE ${DB_NAME};"
+sudo mysql -e "CREATE USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';"
+sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';"
+sudo mysql -e "FLUSH PRIVILEGES;"
 
 # Check if the project directory exists
 if [ -d "/var/www/html/laravel-app" ]; then
@@ -22,48 +66,6 @@ if [ -d "/var/www/html/laravel-app" ]; then
     echo -e "${GREEN}Installing Composer dependencies...${NC}"
     composer install
 else
-    # Otherwise, proceed with the full setup
-    echo -e "${GREEN}Updating package lists...${NC}"
-    sudo apt-get update
-    echo -e "${GREEN}Installing necessary packages...${NC}"
-    sudo apt-get install -y apache2 mysql-server php8.3 php8.3-mysql libapache2-mod-php8.3 php8.3-cli php8.3-zip php8.3-xml php8.3-mbstring php8.3-curl composer unzip git expect
-
-    # Secure MySQL Installation using expect
-    echo -e "${GREEN}Securing MySQL Installation...${NC}"
-    SECURE_MYSQL=$(expect -c "
-    set timeout 10
-    spawn sudo mysql_secure_installation
-    expect \"VALIDATE PASSWORD COMPONENT can be used to test passwords\"
-    send \"n\r\"
-    expect \"New password:\"
-    send \"yourpassword\r\"
-    expect \"Re-enter new password:\"
-    send \"yourpassword\r\"
-    expect \"Do you wish to continue with the password provided?\"
-    send \"y\r\"
-    expect \"Remove anonymous users?\"
-    send \"y\r\"
-    expect \"Disallow root login remotely?\"
-    send \"y\r\"
-    expect \"Remove test database and access to it?\"
-    send \"y\r\"
-    expect \"Reload privilege tables now?\"
-    send \"y\r\"
-    expect eof
-    ")
-
-    echo "$SECURE_MYSQL"
-
-    # Create MySQL database and user
-    DB_NAME='laravel_db'
-    DB_USER='laravel_user'
-    DB_PASS='password'
-    echo -e "${GREEN}Creating MySQL database and user...${NC}"
-    sudo mysql -e "CREATE DATABASE ${DB_NAME};"
-    sudo mysql -e "CREATE USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';"
-    sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';"
-    sudo mysql -e "FLUSH PRIVILEGES;"
-
     # Clone the Laravel project repository
     echo -e "${GREEN}Cloning Laravel project repository...${NC}"
     git clone https://github.com/rezahajrahimi/powerps-core /var/www/html/laravel-app
@@ -126,25 +128,26 @@ else
     unzip phpMyAdmin-latest-all-languages.zip
     mv phpMyAdmin-*-all-languages phpmyadmin
     rm phpMyAdmin-latest-all-languages.zip
+fi
 
-    # Copy bolt.so extension to PHP extensions directory
-    echo -e "${GREEN}Copying bolt.so extension...${NC}"
-    sudo cp "${INSTALL_DIR}/bolt.so" /usr/lib/php/20230831/
+# Copy bolt.so extension to PHP extensions directory
+echo -e "${GREEN}Copying bolt.so extension...${NC}"
+INSTALL_DIR='/path/to/your/project/folder'
+sudo cp "${INSTALL_DIR}/bolt.so" /usr/lib/php/20230831/
 
-    # Get the location of the php.ini file
-    PHP_INI_FILE=$(php --ini | grep "Loaded Configuration File" | cut -d ":" -f 2- | tr -d " ")
+# Get the location of the php.ini file
+PHP_INI_FILE=$(php --ini | grep "Loaded Configuration File" | cut -d ":" -f 2- | tr -d " ")
 
-    # Add bolt.so extension to main php.ini
-    echo -e "${GREEN}Adding bolt.so extension to php.ini...${NC}"
-    echo "extension=bolt.so" | sudo tee -a "${PHP_INI_FILE}"
+# Add bolt.so extension to main php.ini
+sudo echo "extension=bolt.so" | sudo tee -a "${PHP_INI_FILE}"
 
-    # Restart Apache to apply changes
-    echo -e "${GREEN}Restarting Apache to apply changes...${NC}"
-    sudo systemctl restart apache2
+# Restart Apache to apply changes
+echo -e "${GREEN}Restarting Apache to apply changes...${NC}"
+sudo systemctl restart apache2
 
-    # Set up Apache virtual host for Laravel
-    echo -e "${GREEN}Setting up Apache virtual host for Laravel...${NC}"
-    sudo cat > /etc/apache2/sites-available/laravel.conf <<EOF
+# Set up Apache virtual host for Laravel
+echo -e "${GREEN}Setting up Apache virtual host for Laravel...${NC}"
+sudo cat > /etc/apache2/sites-available/laravel.conf <<EOF
 <VirtualHost *:80>
     ServerAdmin webmaster@localhost
     DocumentRoot /var/www/html/laravel-app/public
@@ -154,36 +157,34 @@ else
         AllowOverride All
         Require all granted
     </Directory>
-        ErrorLog \${APACHE_LOG_DIR}/error.log
+
+    ErrorLog \${APACHE_LOG_DIR}/error.log
     CustomLog \${APACHE_LOG_DIR}/access.log combined
 </VirtualHost>
 EOF
 
-    # Enable new site and rewrite module
-    echo -e "${GREEN}Enabling new site and rewrite module...${NC}"
-    sudo a2ensite laravel
-    sudo a2enmod rewrite
-    sudo systemctl restart apache2
+# Enable new site and rewrite module
+echo -e "${GREEN}Enabling new site and rewrite module...${NC}"
+sudo a2ensite laravel
+sudo a2enmod rewrite
+sudo systemctl restart apache2
 
-    # Add schedule to cron job
-    echo -e "${GREEN}Adding schedule to cron job...${NC}"
-    (crontab -l ; echo "* * * * * cd /var/www/html/laravel-app && php artisan schedule:run >> /dev/null 2>&1") | crontab -
+# Add schedule to cron job
+echo -e "${GREEN}Adding schedule to cron job...${NC}"
+(crontab -l ; echo "* * * * * cd /var/www/html/laravel-app && php artisan schedule:run >> /dev/null 2>&1") | crontab -
 
-    # Ensure services start on reboot
-    echo -e "${GREEN}Ensuring services start on reboot...${NC}"
-    (crontab -l ; echo "@reboot systemctl restart apache2") | crontab -
-    (crontab -l ; echo "@reboot systemctl restart mysql") | crontab -
-    (crontab -l ; echo "@reboot /usr/bin/php /var/www/html/laravel-app/artisan serve &") | crontab -
+# Ensure services start on reboot
+echo -e "${GREEN}Ensuring services start on reboot...${NC}"
+(crontab -l ; echo "@reboot systemctl restart apache2") | crontab -
+(crontab -l ; echo "@reboot systemctl restart mysql") | crontab -
+(crontab -l ; echo "@reboot /usr/bin/php /var/www/html/laravel-app/artisan serve &") | crontab -
 
-    # Start Laravel server
-    echo -e "${GREEN}Starting Laravel server...${NC}"
-    cd /var/www/html/laravel-app
-    php artisan serve &
-fi
+# Start Laravel server
+echo -e "${GREEN}Starting Laravel server...${NC}"
+cd /var/www/html/laravel-app
+php artisan serve &
 
 echo -e "${CYAN}==============================${NC}"
 echo -e "${YELLOW}  Setup Complete!${NC}"
 echo -e "${CYAN}==============================${NC}"
 echo -e "${GREEN}Laravel project with MySQL, PHPMyAdmin setup, and scheduled command complete!${NC}"
-
-
