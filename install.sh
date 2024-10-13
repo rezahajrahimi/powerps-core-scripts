@@ -16,20 +16,20 @@ LOG_DIR="${INSTALL_DIR}/logs"
 APACHE_CONF="${INSTALL_DIR}/apache.conf"
 
 # Check for dependencies
-if ! command -v git &> /dev/null; then
-  echo "Error: git is not installed. Please install git and try again."
-  exit 1
-fi
+# if ! command -v git &> /dev/null; then
+#   echo "Error: git is not installed. Please install git and try again."
+#   exit 1
+# fi
 
-if ! command -v composer &> /dev/null; then
-  echo "Error: composer is not installed. Please install composer and try again."
-  exit 1
-fi
+# if ! command -v composer &> /dev/null; then
+#   echo "Error: composer is not installed. Please install composer and try again."
+#   exit 1
+# fi
 
-if ! command -v apache2 &> /dev/null; then
-  echo "Error: apache2 is not installed. Please install apache2 and try again."
-  exit 1
-fi
+# if ! command -v apache2 &> /dev/null; then
+#   echo "Error: apache2 is not installed. Please install apache2 and try again."
+#   exit 1
+# fi
 
 # Install PHP 8.3 with necessary extensions
 sudo add-apt-repository ppa:ondrej/php
