@@ -40,6 +40,11 @@ sudo apt-get install -y php8.3 php8.3-fpm php8.3-mysql php8.3-curl php8.3-gd php
 sudo apt-get install -y git composer apache2 mysql-server
 
 # Create install directory
+if [ -d "${INSTALL_DIR}" ]; then
+  echo "Directory ${INSTALL_DIR} already exists. Deleting it..."
+  sudo rm -rf "${INSTALL_DIR}"
+fi
+
 sudo mkdir -p "${INSTALL_DIR}"
 sudo chown -R "$USER:$USER" "${INSTALL_DIR}"
 
@@ -95,4 +100,4 @@ echo "Installation complete!"
 
 # Display instructions
 echo "Please visit http://${APP_NAME}.localhost in your web browser to access the application."
-echo "Please note that you may need to configure your hosts file to
+echo "Please note that you may need to configure your hosts file to access the application."
