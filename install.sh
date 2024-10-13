@@ -39,6 +39,9 @@ fi
 
 sudo mkdir -p "${INSTALL_DIR}"
 sudo chown -R "$USER:$USER" "${INSTALL_DIR}"
+if [ ! -f "/var/www/html/powerps-core/.env" ]; then
+  touch "/var/www/html/powerps-core/.env"
+fi
 
 # Clone repository
 git clone "${REPO_URL}" "${INSTALL_DIR}"
