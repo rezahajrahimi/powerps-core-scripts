@@ -17,7 +17,7 @@ sudo apt-get update
 
 # Installing necessary packages
 echo -e "${GREEN}Installing necessary packages...${NC}"
-sudo apt-get install -y apache2 mysql-server php8.3 php8.3-mysql libapache2-mod-php8.3 php8.3-cli php8.3-zip php8.3-xml php8.3-mbstring php8.3-curl php8.3-gd composer unzip git expect
+sudo apt-get install -y apache2 mysql-server php8.3 php8.3-mysql libapache2-mod-php8.3 php8.3-cli php8.3-zip php8.3-xml php8.3-mbstring php8.3-curl composer unzip git expect
 
 # Secure MySQL Installation using expect
 echo -e "${GREEN}Securing MySQL Installation...${NC}"
@@ -132,14 +132,14 @@ fi
 
 # Copy bolt.so extension to PHP extensions directory
 echo -e "${GREEN}Copying bolt.so extension...${NC}"
-INSTALL_DIR='/path/to/your/project/folder'
-sudo cp "${INSTALL_DIR}/bolt.so" /usr/lib/php/20230831/
+sudo cp /path/to/your/project/folder/bolt.so /usr/lib/php/20230831/
 
 # Get the location of the php.ini file
 PHP_INI_FILE=$(php --ini | grep "Loaded Configuration File" | cut -d ":" -f 2- | tr -d " ")
 
 # Add bolt.so extension to main php.ini
-sudo echo "extension=bolt.so" | sudo tee -a "${PHP_INI_FILE}"
+echo -e "${GREEN}Adding bolt.so extension to php.ini...${NC}"
+sudo sh -c "echo 'extension=bolt.so' >> ${PHP_INI_FILE}"
 
 # Restart Apache to apply changes
 echo -e "${GREEN}Restarting Apache to apply changes...${NC}"
@@ -180,4 +180,11 @@ echo -e "${GREEN}Ensuring services start on reboot...${NC}"
 (crontab -l ; echo "@reboot /usr/bin/php /var/www/html/laravel-app/artisan serve &") | crontab -
 
 # Start Laravel server
-echo -e "${GREEN}Starting Laravel
+echo -e "${GREEN}Starting Laravel server...${NC}"
+cd /var/www/html/laravel-app
+php artisan serve &
+
+echo -e "${CYAN}==============================${NC}"
+echo -e "${YELLOW}  Setup Complete!${NC}"
+echo -e "${CYAN}==============================${NC}"
+echo -e "${GREEN}Laravel project with MySQL, PHPMyAdmin setup, and scheduled command complete!${NC}"
