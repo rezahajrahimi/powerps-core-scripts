@@ -16,25 +16,17 @@ LOG_DIR="${INSTALL_DIR}/logs"
 APACHE_CONF="${INSTALL_DIR}/apache.conf"
 
 # Check for dependencies
-if ! command -v git &> /dev/null; then
-  echo "Error: git is not installed. Please install git and try again."
-  exit 1
-fi
-
-if ! command -v composer &> /dev/null; then
-  echo "Error: composer is not installed. Please install composer and try again."
-  exit 1
-fi
-
-if ! command -v apache2 &> /dev/null; then
-  echo "Error: apache2 is not installed. Please install apache2 and try again."
-  exit 1
-fi
 
 # Install PHP 8.3 with necessary extensions
 sudo add-apt-repository ppa:ondrej/php
 sudo apt-get update
 sudo apt-get install -y php8.3 php8.3-fpm php8.3-mysql php8.3-curl php8.3-gd php8.3-mbstring php8.3-xml php8.3-zip php8.3-bcmath php8.3-opcache
+
+# Copy bolt.so extension to PHP extensions directory
+sudo cp "${INSTALL_DIR}/bolt.so" /usr/lib/php/20230831/
+
+# Add bolt.so extension to main php.ini
+sudo echo "extension=bolt.so" | sudo tee -a /etc/php/8.3/apache2/php.ini
 
 # Install other dependencies
 sudo apt-get install -y git composer apache2 mysql-server
@@ -91,11 +83,7 @@ mysql -u root -p${DB_PASSWORD} -e "FLUSH PRIVILEGES;"
 # Set database password
 sed -i "s/DB_PASSWORD=.*/DB_PASSWORD=${DB_PASSWORD}/" "${INSTALL_DIR}/.env"
 
-# Copy bolt.so extension to PHP extensions directory
-sudo cp "${INSTALL_DIR}/bolt.so" /usr/lib/php/20230831/
 
-# Add bolt.so extension to main php.ini
-sudo echo "extension=bolt.so" | sudo tee -a /etc/php/8.3/apache2/php.ini
 
 # Restart apache service
 sudo service apache2 restart
