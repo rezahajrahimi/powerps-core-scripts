@@ -69,9 +69,10 @@ if [ -d "/var/www/html/laravel-app" ]; then
 
     # Get the location of the php.ini file
     PHP_INI_FILE=$(php --ini | grep "Loaded Configuration File" | cut -d ":" -f 2- | tr -d " ")
-    # Install Composer dependencies
-    echo -e "${GREEN}Installing Composer dependencies...${NC}"
-    composer install
+    # Run migrations
+    echo -e "${GREEN}Running migrations...${NC}"
+    php artisan migrate
+
 else
     # Clone the Laravel project repository
     echo -e "${GREEN}Cloning Laravel project repository...${NC}"
@@ -83,10 +84,6 @@ else
 
     # Get the location of the php.ini file
     PHP_INI_FILE=$(php --ini | grep "Loaded Configuration File" | cut -d ":" -f 2- | tr -d " ")
-
-    # Install Composer dependencies
-    echo -e "${GREEN}Installing Composer dependencies...${NC}"
-    composer install
 
     # Prompt user for .env variables only if .env does not exist
     if [ ! -f ".env" ]; then
@@ -149,6 +146,9 @@ else
         sudo systemctl restart apache2
     fi
 fi
+    echo -e "${GREEN}Installing Composer dependencies...${NC}"
+    composer install
+
 
 # Set up Apache virtual host for Laravel
 echo -e "${GREEN}Setting up Apache virtual host for Laravel...${NC}"
