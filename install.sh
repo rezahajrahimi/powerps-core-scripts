@@ -47,39 +47,73 @@ git clone "${REPO_URL}" "${INSTALL_DIR}"
 cd "${INSTALL_DIR}"
 composer install
 
-# # Check if Apache configuration file exists
-# if [ -f "/etc/apache2/sites-available/${APP_NAME}.conf" ]; then
-#   echo "Error: Apache configuration file already exists. Please choose a different name for your app."
-#   exit 1
-# fi
 
-# Create default Apache configuration file
-sudo tee /etc/apache2/sites-available/${APP_NAME}.conf <<EOF
+
+    # Generate app key
+    echo -e "${GREEN}Generating app key...${NC}"
+    php artisan key:generate
+
+    # Run migrations
+    echo -e "${GREEN}Running migrations...${NC}"
+    php artisan migrate
+
+    # Check if database exists
+if mysql -u root -p${DB_PASSWORD} -e "SHOW DATABASES LIKE '${APP_NAME}';" &> /dev/null; then
+  echo "Error: Database already exists. Please choose a different name for your app."
+  exit 1
+fi
+
+    
+    # Install PHPMyAdmin
+    echo -e "${GREEN}Installing PHPMyAdmin...${NC}"
+    cd /var/www/html
+    wget https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.zip
+    unzip phpMyAdmin-latest-all-languages.zip
+    mv phpMyAdmin-*-all-languages phpmyadmin
+    rm phpMyAdmin-latest-all-languages.zip
+
+    # Restart Apache to apply changes
+    echo -e "${GREEN}Restarting Apache to apply changes...${NC}"
+    sudo systemctl restart apache2
+
+    # Set up Apache virtual host for Laravel
+    echo -e "${GREEN}Setting up Apache virtual host for Laravel...${NC}"
+    sudo cat > /etc/apache2/sites-available/laravel.conf <<EOF
 <VirtualHost *:80>
-    ServerName ${APP_NAME}.localhost
-    DocumentRoot ${INSTALL_DIR}/public
+    ServerAdmin webmaster@localhost
+    DocumentRoot /var/www/html/laravel-app/public
 
-    <Directory ${INSTALL_DIR}/public>
-        Options Indexes FollowSymLinks MultiViews
+    <Directory /var/www/html/laravel-app>
+        Options Indexes FollowSymLinks
         AllowOverride All
         Require all granted
     </Directory>
 
-    ErrorLog ${LOG_DIR}/error.log
-    CustomLog ${LOG_DIR}/access.log combined
+    ErrorLog \${APACHE_LOG_DIR}/error.log
+    CustomLog \${APACHE_LOG_DIR}/access.log combined
 </VirtualHost>
 EOF
 
-# Configure apache
-sudo a2ensite "${APP_NAME}"
+# Enable new site and rewrite module
+    echo -e "${GREEN}Enabling new site and rewrite module...${NC}"
+    sudo a2ensite laravel
+    sudo a2enmod rewrite
+    sudo systemctl restart apache2
 
-# Restart apache service
-sudo service apache2 restart
+    # Add schedule to cron job
+    echo -e "${GREEN}Adding schedule to cron job...${NC}"
+    (crontab -l ; echo "* * * * * cd /var/www/html/laravel-app && php artisan schedule:run >> /dev/null 2>&1") | crontab -
 
-# Check if apache service started successfully
-if [ $? -ne 0 ]; then
-  echo "Error: Apache service failed to start. Please check the logs for more information."
-  exit 1
+    # Ensure services start on reboot
+    echo -e "${GREEN}Ensuring services start on reboot...${NC}"
+    (crontab -l ; echo "@reboot systemctl restart apache2") | crontab -
+    (crontab -l ; echo "@reboot systemctl restart mysql") | crontab -
+    (crontab -l ; echo "@reboot /usr/bin/php /var/www/html/laravel-app/artisan serve &") | crontab -
+
+    # Start Laravel server
+    echo -e "${GREEN}Starting Laravel server...${NC}"
+    cd /var/www/html/laravel-app
+    php artisan serve &
 fi
 
 # Create logs directory
@@ -93,11 +127,6 @@ sudo chown -R "$USER:$USER" "${HTML_DIR}"
 # Create symbolic link
 sudo ln -s "${INSTALL_DIR}/public" "${HTML_DIR}"
 
-# Check if database exists
-if mysql -u root -p${DB_PASSWORD} -e "SHOW DATABASES LIKE '${APP_NAME}';" &> /dev/null; then
-  echo "Error: Database already exists. Please choose a different name for your app."
-  exit 1
-fi
 
 # Create database and user
 mysql -u root -p${DB_PASSWORD} -e "CREATE DATABASE ${APP_NAME};"
