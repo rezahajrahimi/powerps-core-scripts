@@ -8,7 +8,7 @@ NC='\033[0m' # No Color
 
 # Pretty title
 echo -e "${CYAN}==============================${NC}"
-echo -e "${YELLOW}  Setting up or Updating your PowerPS${NC}"
+echo -e "${YELLOW}  Setting up or Updating your Laravel Project${NC}"
 echo -e "${CYAN}==============================${NC}"
 
 # Updating package lists
@@ -180,11 +180,4 @@ echo -e "${GREEN}Ensuring services start on reboot...${NC}"
 (crontab -l ; echo "@reboot /usr/bin/php /var/www/html/laravel-app/artisan serve &") | crontab -
 
 # Start Laravel server
-echo -e "${GREEN}Starting Laravel server...${NC}"
-cd /var/www/html/laravel-app
-php artisan serve &
-
-echo -e "${CYAN}==============================${NC}"
-echo -e "${YELLOW}  Setup Complete!${NC}"
-echo -e "${CYAN}==============================${NC}"
-echo -e "${GREEN}Laravel project with MySQL, PHPMyAdmin setup, and scheduled command complete!${NC}"
+echo -e "${GREEN}Starting Laravel
