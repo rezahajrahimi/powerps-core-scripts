@@ -72,7 +72,15 @@ EOF
 
 # Configure apache
 sudo a2ensite "${APP_NAME}"
+
+# Restart apache service
 sudo service apache2 restart
+
+# Check if apache service started successfully
+if [ $? -ne 0 ]; then
+  echo "Error: Apache service failed to start. Please check the logs for more information."
+  exit 1
+fi
 
 # Create logs directory
 sudo mkdir -p "${LOG_DIR}"
@@ -98,9 +106,6 @@ mysql -u root -p${DB_PASSWORD} -e "FLUSH PRIVILEGES;"
 
 # Set database password
 sed -i "s/DB_PASSWORD=.*/DB_PASSWORD=${DB_PASSWORD}/" "${INSTALL_DIR}/.env"
-
-# Restart apache service
-sudo service apache2 restart
 
 # Log success
 echo "Installation complete!"
