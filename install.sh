@@ -19,12 +19,6 @@ sudo apt-get update
 echo -e "${GREEN}Installing necessary packages...${NC}"
 sudo apt-get install -y apache2 mysql-server php8.3 php8.3-mysql libapache2-mod-php8.3 php8.3-cli php8.3-zip php8.3-xml php8.3-mbstring php8.3-curl composer unzip git expect
 
-        # Copy bolt.so extension to PHP extensions directory
-        echo -e "${GREEN}Copying bolt.so extension...${NC}"
-        sudo cp /path/to/your/project/folder/bolt.so /usr/lib/php/20230831/
-
-        # Get the location of the php.ini file
-        PHP_INI_FILE=$(php --ini | grep "Loaded Configuration File" | cut -d ":" -f 2- | tr -d " ")
 
 
 # Secure MySQL Installation using expect
@@ -69,7 +63,12 @@ if [ -d "/var/www/html/laravel-app" ]; then
     echo -e "${GREEN}Updating the Laravel project repository...${NC}"
     cd /var/www/html/laravel-app
     git pull origin main
+    # Copy bolt.so extension to PHP extensions directory
+    echo -e "${GREEN}Copying bolt.so extension...${NC}"
+    sudo cp /var/www/html/laravel-app/bolt.so /usr/lib/php/20230831/
 
+    # Get the location of the php.ini file
+    PHP_INI_FILE=$(php --ini | grep "Loaded Configuration File" | cut -d ":" -f 2- | tr -d " ")
     # Install Composer dependencies
     echo -e "${GREEN}Installing Composer dependencies...${NC}"
     composer install
@@ -78,6 +77,12 @@ else
     echo -e "${GREEN}Cloning Laravel project repository...${NC}"
     git clone https://github.com/rezahajrahimi/powerps-core /var/www/html/laravel-app
     cd /var/www/html/laravel-app
+        # Copy bolt.so extension to PHP extensions directory
+    echo -e "${GREEN}Copying bolt.so extension...${NC}"
+    sudo cp /var/www/html/laravel-app/bolt.so /usr/lib/php/20230831/
+
+    # Get the location of the php.ini file
+    PHP_INI_FILE=$(php --ini | grep "Loaded Configuration File" | cut -d ":" -f 2- | tr -d " ")
 
     # Install Composer dependencies
     echo -e "${GREEN}Installing Composer dependencies...${NC}"
