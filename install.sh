@@ -47,11 +47,11 @@ git clone "${REPO_URL}" "${INSTALL_DIR}"
 cd "${INSTALL_DIR}"
 composer install
 
-# Check if Apache configuration file exists
-if [ -f "/etc/apache2/sites-available/${APP_NAME}.conf" ]; then
-  echo "Error: Apache configuration file already exists. Please choose a different name for your app."
-  exit 1
-fi
+# # Check if Apache configuration file exists
+# if [ -f "/etc/apache2/sites-available/${APP_NAME}.conf" ]; then
+#   echo "Error: Apache configuration file already exists. Please choose a different name for your app."
+#   exit 1
+# fi
 
 # Create default Apache configuration file
 sudo tee /etc/apache2/sites-available/${APP_NAME}.conf <<EOF
