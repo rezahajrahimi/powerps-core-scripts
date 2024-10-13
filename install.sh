@@ -1,4 +1,3 @@
-Bash
 #!/bin/bash
 
 # Color codes
