@@ -72,10 +72,19 @@ if [ -d "/var/www/html/laravel-app" ]; then
     
         echo -e "${GREEN}Installing Composer dependencies...${NC}"
     composer install
+# Set permissions for Laravel storage and bootstrap/cache directories
+sudo chown -R www-data:www-data /var/www/html/laravel-app/storage
+sudo chown -R www-data:www-data /var/www/html/laravel-app/bootstrap/cache
 
-    # Run migrations
-    echo -e "${GREEN}Running migrations...${NC}"
-    php artisan migrate
+            # Generate app key
+
+        echo -e "${GREEN}Generating app key...${NC}"
+        php artisan key:generate
+
+        # Run migrations
+        echo -e "${GREEN}Running migrations...${NC}"
+        php artisan migrate
+
 
 else
     # Clone the Laravel project repository
@@ -92,7 +101,8 @@ else
     # Prompt user for .env variables only if .env does not exist
     if [ ! -f ".env" ]; then
         echo -e "${GREEN}Installing Composer dependencies...${NC}"
-    composer install
+        composer install
+        
 
         echo -e "${CYAN}Please enter the following environment variables for your Laravel project:${NC}"
         read -p "App Name: " APP_NAME
@@ -156,12 +166,15 @@ else
     fi
 fi
 
+# Set permissions for Laravel storage and bootstrap/cache directories
+sudo chown -R www-data:www-data /var/www/html/laravel-app/storage
+sudo chown -R www-data:www-data /var/www/html/laravel-app/bootstrap/cache
 
 # Set up Apache virtual host for Laravel
 echo -e "${GREEN}Setting up Apache virtual host for Laravel...${NC}"
 sudo cat > /etc/apache2/sites-available/laravel.conf <<EOF
 <VirtualHost *:80>
-    ServerAdmin webmaster@localhost
+    ServerName powerps
     DocumentRoot /var/www/html/laravel-app/public
 
     <Directory /var/www/html/laravel-app>
