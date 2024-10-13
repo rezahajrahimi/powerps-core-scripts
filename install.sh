@@ -13,9 +13,7 @@ INSTALL_DIR="/var/www/html/${APP_NAME}"
 HTML_DIR="${INSTALL_DIR}/html"
 COMPOSER_DIR="${INSTALL_DIR}/composer"
 LOG_DIR="${INSTALL_DIR}/logs"
-APACHE_CONF="${INSTALL_DIR}/apache.conf"
-
-# Check for dependencies
+APACHE_CONF="apache.conf" # fix: remove ${INSTALL_DIR}/ from APACHE_CONF
 
 # Install PHP 8.3 with necessary extensions
 sudo add-apt-repository ppa:ondrej/php
@@ -31,7 +29,6 @@ PHP_INI_FILE=$(php --ini | grep "Loaded Configuration File" | cut -d ":" -f 2- |
 # Add bolt.so extension to main php.ini
 sudo echo "extension=bolt.so" | sudo tee -a "${PHP_INI_FILE}"
 
-# ...
 # Install other dependencies
 sudo apt-get install -y git composer apache2 mysql-server
 
@@ -58,7 +55,7 @@ if [ -f "/etc/apache2/sites-available/${APP_NAME}.conf" ]; then
 fi
 
 # Configure apache
-sudo cp "${INSTALL_DIR}/${APACHE_CONF}" /etc/apache2/sites-available/
+sudo cp "${APACHE_CONF}" /etc/apache2/sites-available/
 sudo a2ensite "${APP_NAME}"
 sudo service apache2 restart
 
@@ -86,8 +83,6 @@ mysql -u root -p${DB_PASSWORD} -e "FLUSH PRIVILEGES;"
 
 # Set database password
 sed -i "s/DB_PASSWORD=.*/DB_PASSWORD=${DB_PASSWORD}/" "${INSTALL_DIR}/.env"
-
-
 
 # Restart apache service
 sudo service apache2 restart
