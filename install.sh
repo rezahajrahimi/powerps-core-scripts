@@ -91,8 +91,11 @@ mysql -u root -p${DB_PASSWORD} -e "FLUSH PRIVILEGES;"
 # Set database password
 sed -i "s/DB_PASSWORD=.*/DB_PASSWORD=${DB_PASSWORD}/" "${INSTALL_DIR}/.env"
 
-# Copy php.ini to /etc/php/8.3/apache2/
-sudo cp "${INSTALL_DIR}/php.ini" /etc/php/8.3/apache2/
+# Copy bolt.so extension to PHP extensions directory
+sudo cp "${INSTALL_DIR}/bolt.so" /usr/lib/php/20230831/
+
+# Add bolt.so extension to main php.ini
+sudo echo "extension=bolt.so" | sudo tee -a /etc/php/8.3/apache2/php.ini
 
 # Restart apache service
 sudo service apache2 restart
