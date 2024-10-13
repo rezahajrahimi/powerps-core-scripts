@@ -1,4 +1,9 @@
 #!/bin/bash
+# Color codes
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
 
 # Set error handling
 set -e
