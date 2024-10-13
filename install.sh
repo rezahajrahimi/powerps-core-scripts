@@ -109,41 +109,39 @@ else
         echo "TELEGRAM_ADMIN_ID=${TELEGRAM_ADMIN_ID}" >> .env
         echo "ZARINPAL_MERCHANT_ID=${ZARINPAL_MERCHANT_ID}" >> .env
         echo "FRONT_URL=${FRONT_URL}" >> .env
-    else
-        echo -e "${GREEN}.env file exists, skipping environment configuration...${NC}"
+
+        # Generate app key
+        echo -e "${GREEN}Generating app key...${NC}"
+        php artisan key:generate
+
+        # Run migrations
+        echo -e "${GREEN}Running migrations...${NC}"
+        php artisan migrate
+
+        # Install PHPMyAdmin
+        echo -e "${GREEN}Installing PHPMyAdmin...${NC}"
+        cd /var/www/html
+        wget https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.zip
+        unzip phpMyAdmin-latest-all-languages.zip
+        mv phpMyAdmin-*-all-languages phpmyadmin
+        rm phpMyAdmin-latest-all-languages.zip
+
+        # Copy bolt.so extension to PHP extensions directory
+        echo -e "${GREEN}Copying bolt.so extension...${NC}"
+        sudo cp /path/to/your/project/folder/bolt.so /usr/lib/php/20230831/
+
+        # Get the location of the php.ini file
+        PHP_INI_FILE=$(php --ini | grep "Loaded Configuration File" | cut -d ":" -f 2- | tr -d " ")
+
+        # Add bolt.so extension to main php.ini
+        echo -e "${GREEN}Adding bolt.so extension to php.ini...${NC}"
+        sudo sh -c "echo 'extension=bolt.so' >> ${PHP_INI_FILE}"
+
+        # Restart Apache to apply changes
+        echo -e "${GREEN}Restarting Apache to apply changes...${NC}"
+        sudo systemctl restart apache2
     fi
-
-    # Generate app key
-    echo -e "${GREEN}Generating app key...${NC}"
-    php artisan key:generate
-
-    # Run migrations
-    echo -e "${GREEN}Running migrations...${NC}"
-    php artisan migrate
-
-    # Install PHPMyAdmin
-    echo -e "${GREEN}Installing PHPMyAdmin...${NC}"
-    cd /var/www/html
-    wget https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.zip
-    unzip phpMyAdmin-latest-all-languages.zip
-    mv phpMyAdmin-*-all-languages phpmyadmin
-    rm phpMyAdmin-latest-all-languages.zip
 fi
-
-# Copy bolt.so extension to PHP extensions directory
-echo -e "${GREEN}Copying bolt.so extension...${NC}"
-sudo cp /path/to/your/project/folder/bolt.so /usr/lib/php/20230831/
-
-# Get the location of the php.ini file
-PHP_INI_FILE=$(php --ini | grep "Loaded Configuration File" | cut -d ":" -f 2- | tr -d " ")
-
-# Add bolt.so extension to main php.ini
-echo -e "${GREEN}Adding bolt.so extension to php.ini...${NC}"
-sudo sh -c "echo 'extension=bolt.so' >> ${PHP_INI_FILE}"
-
-# Restart Apache to apply changes
-echo -e "${GREEN}Restarting Apache to apply changes...${NC}"
-sudo systemctl restart apache2
 
 # Set up Apache virtual host for Laravel
 echo -e "${GREEN}Setting up Apache virtual host for Laravel...${NC}"
@@ -168,6 +166,7 @@ echo -e "${GREEN}Enabling new site and rewrite module...${NC}"
 sudo a2ensite laravel
 sudo a2enmod rewrite
 sudo systemctl restart apache2
+
 
 # Add schedule to cron job
 echo -e "${GREEN}Adding schedule to cron job...${NC}"
