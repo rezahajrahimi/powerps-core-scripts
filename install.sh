@@ -172,25 +172,33 @@ sudo chown -R www-data:www-data /var/www/html/laravel-app/bootstrap/cache
 
 # Set up Apache virtual host for Laravel
 echo -e "${GREEN}Setting up Apache virtual host for Laravel...${NC}"
-sudo cat > /etc/apache2/sites-available/laravel.conf <<EOF
-<VirtualHost *:80>
+# Add test domain entry to /etc/hosts
+sudo echo '127.0.0.1 powerps' >> /etc/hosts
+
+# Create Apache2 virtual host file for Laravel
+sudo echo '<VirtualHost *:80>
     ServerName powerps
     DocumentRoot /var/www/html/laravel-app/public
 
     <Directory /var/www/html/laravel-app>
-        Options Indexes FollowSymLinks
         AllowOverride All
-        Require all granted
     </Directory>
 
-    ErrorLog \${APACHE_LOG_DIR}/error.log
-    CustomLog \${APACHE_LOG_DIR}/access.log combined
-</VirtualHost>
-EOF
+    ErrorLog ${APACHE_LOG_DIR}/laravel-error.log
+    CustomLog ${APACHE_LOG_DIR}/laravel-access.log combined
+</VirtualHost>' > /etc/apache2/sites-available/powerps
+
+# Enable Laravel virtual host
+sudo a2ensite powerps
+
+# Reload Apache2 configuration
+# sudo systemctl reload apache2
+
 
 # Enable new site and rewrite module
 echo -e "${GREEN}Enabling new site and rewrite module...${NC}"
-sudo a2ensite laravel
+# sudo a2ensite laravel
+sudo a2ensite powerps
 sudo a2enmod rewrite
 sudo systemctl restart apache2
 
