@@ -13,7 +13,7 @@ INSTALL_DIR="/var/www/html/${APP_NAME}"
 HTML_DIR="${INSTALL_DIR}/html"
 COMPOSER_DIR="${INSTALL_DIR}/composer"
 LOG_DIR="${INSTALL_DIR}/logs"
-APACHE_CONF="apache.conf" # fix: remove ${INSTALL_DIR}/ from APACHE_CONF
+APACHE_CONF="./apache.conf" # fix: provide full path to apache.conf
 
 # Install PHP 8.3 with necessary extensions
 sudo add-apt-repository ppa:ondrej/php
