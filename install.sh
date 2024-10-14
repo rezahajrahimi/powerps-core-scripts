@@ -7,12 +7,11 @@ NC='\033[0m' # No Color
 
 # Pretty title
 echo -e "${CYAN}==============================${NC}"
-echo -e "${YELLOW}  Setting up or Updating your core and WebApp PowerPs${NC}"
+echo -e "${YELLOW}  Setting up or Updating your Laravel Project${NC}"
 echo -e "${CYAN}==============================${NC}"
 
-# Prompt user for the subdomains
-read -p "Enter your Core subdomain (e.g., core.domain.com): " LARAVEL_SUBDOMAIN
-read -p "Enter your WebApp subdomain (e.g., web.domain.com): " HTML5_SUBDOMAIN
+# Prompt user for the subdomain
+read -p "Enter your subdomain (e.g., core.domain.com): " DOMAIN_NAME
 
 # Update package lists and install necessary packages
 echo -e "${GREEN}Updating package lists and installing necessary packages...${NC}"
@@ -45,18 +44,16 @@ expect eof
 echo "$SECURE_MYSQL"
 
 # Create MySQL database and user
-DB_NAME='powerps_db'
-DB_USER='powerps_user'
-// create a random password for the user
-DB_PASS=$(openssl rand -base64 12)
-
+DB_NAME='laravel_db'
+DB_USER='laravel_user'
+DB_PASS='password'
 echo -e "${GREEN}Creating MySQL database and user...${NC}"
 sudo mysql -e "CREATE DATABASE ${DB_NAME};"
 sudo mysql -e "CREATE USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';"
 sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';"
 sudo mysql -e "FLUSH PRIVILEGES;"
 
-# Check if the Laravel project directory exists
+# Check if the project directory exists
 if [ -d "/var/www/html/laravel-app" ]; then
     # If it exists, update the repository
     echo -e "${GREEN}Updating the Laravel project repository...${NC}"
@@ -95,30 +92,17 @@ sudo chown -R www-data:www-data /var/www/html/laravel-app/bootstrap/cache
 echo -e "${GREEN}Setting up environment variables...${NC}"
 if [ ! -f "/var/www/html/laravel-app/.env" ]; then
     cp /var/www/html/laravel-app/.env.example /var/www/html/laravel-app/.env
-    echo "APP_NAME=powerps" >> /var/www/html/laravel-app/.env
+    echo "APP_NAME=Laravel" >> /var/www/html/laravel-app/.env
     echo "APP_ENV=local" >> /var/www/html/laravel-app/.env
     echo "APP_KEY=" >> /var/www/html/laravel-app/.env
     echo "APP_DEBUG=true" >> /var/www/html/laravel-app/.env
-    echo "APP_URL=http://${LARAVEL_SUBDOMAIN}" >> /var/www/html/laravel-app/.env
-    echo "FRONT_URL=http://${HTML5_SUBDOMAIN}" >> /var/www/html/laravel-app/.env
-
+    echo "APP_URL=http://${DOMAIN_NAME}" >> /var/www/html/laravel-app/.env
     echo "DB_CONNECTION=mysql" >> /var/www/html/laravel-app/.env
     echo "DB_HOST=127.0.0.1" >> /var/www/html/laravel-app/.env
     echo "DB_PORT=3306" >> /var/www/html/laravel-app/.env
     echo "DB_DATABASE=${DB_NAME}" >> /var/www/html/laravel-app/.env
     echo "DB_USERNAME=${DB_USER}" >> /var/www/html/laravel-app/.env
     echo "DB_PASSWORD=${DB_PASS}" >> /var/www/html/laravel-app/.env
-
-        read -p "Enter your TELEGRAM_BOT_TOKEN (e.g., botxxxxxxxxxxxxxxxxxxxxxx): " TELEGRAM_BOT_TOKEN
-    echo "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}" >> /var/www/html/laravel-app/.env
-    echo "TELEGRAM_API_ENDPOINT=https://api.telegram.org" >> /var/www/html/laravel-app/.env
-    read -p "Enter your TELEGRAM_ADMIN_ID (e.g., 91155536): " TELEGRAM_ADMIN_ID
-    echo "TELEGRAM_ADMIN_ID=${TELEGRAM_ADMIN_ID}" >> /var/www/html/laravel-app/.env
-    read -p "Enter your ZARINPAL_MERCHANT_ID (e.g., xxxxxx-xxxxxxxxx-xxxxxxxx-xxxxx): " ZARINPAL_MERCHANT_ID
-    echo "ZARINPAL_MERCHANT_ID=${ZARINPAL_MERCHANT_ID}" >> /var/www/html/laravel-app/.env
-    read -p "Enter your NOWPAYMENTS_API_KEY (e.g., xxxxxx-xxxxxxxxx-xxxxxxxx-xxxxx): " NOWPAYMENTS_API_KEY
-    echo "NOWPAYMENTS_API_KEY=${NOWPAYMENTS_API_KEY}" >> /var/www/html/laravel-app/.env
-
 fi
 
 # Generate app key
@@ -128,24 +112,20 @@ php artisan key:generate
 # Run migrations
 echo -e "${GREEN}Running migrations...${NC}"
 php artisan migrate
-# Check if phpMyAdmin is installed
-if [ -d "/var/www/html/phpmyadmin" ]; then
-    echo -e "${GREEN}phpMyAdmin is already installed.${NC}"
-else
-    # Install PHPMyAdmin
-    echo -e "${GREEN}Installing PHPMyAdmin...${NC}"
-    cd /var/www/html
-    wget https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.zip
-    unzip phpMyAdmin-latest-all-languages.zip
-    mv phpMyAdmin-*-all-languages phpmyadmin
-    rm phpMyAdmin-latest-all-languages.zip
-fi
+
+# Install PHPMyAdmin
+echo -e "${GREEN}Installing PHPMyAdmin...${NC}"
+cd /var/www/html
+wget https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.zip
+unzip phpMyAdmin-latest-all-languages.zip
+mv phpMyAdmin-*-all-languages phpmyadmin
+rm phpMyAdmin-latest-all-languages.zip
 
 # Set up Apache virtual host for Laravel
 echo -e "${GREEN}Setting up Apache virtual host for Laravel...${NC}"
-sudo bash -c "cat <<EOT > /etc/apache2/sites-available/powerps-core.conf
+sudo bash -c "cat <<EOT > /etc/apache2/sites-available/powerps.conf
 <VirtualHost *:80>
-    ServerName ${LARAVEL_SUBDOMAIN}
+    ServerName ${DOMAIN_NAME}
     DocumentRoot /var/www/html/laravel-app/public
     <Directory /var/www/html/laravel-app>
         AllowOverride All
@@ -155,44 +135,13 @@ sudo bash -c "cat <<EOT > /etc/apache2/sites-available/powerps-core.conf
 </VirtualHost>
 EOT"
 
-# Check if the HTML5 project directory exists
-if [ -d "/var/www/html/powerps-webapp" ]; then
-    # If it exists, update the repository
-    echo -e "${GREEN}Updating the HTML5 project repository...${NC}"
-    cd /var/www/html/powerps-webapp
-    git pull origin main
-else
-    # Clone the HTML5 project repository
-    echo -e "${GREEN}Cloning HTML5 project repository...${NC}"
-    git clone https://github.com/rezahajrahimi/powerps-webapp /var/www/html/powerps-webapp
-    cd /var/www/html/powerps-webapp
-fi
-
-# Set up Apache virtual host for HTML5 project
-echo -e "${GREEN}Setting up Apache virtual host for HTML5 project...${NC}"
-sudo bash -c "cat <<EOT > /etc/apache2/sites-available/powerps-webapp.conf
-<VirtualHost *:80>
-    ServerName ${HTML5_SUBDOMAIN}
-    DocumentRoot /var/www/html/powerps-webapp
-    <Directory /var/www/html/powerps-webapp>
-        AllowOverride All
-        Options Indexes FollowSymLinks
-        Require all granted
-    </Directory>
-    ErrorLog \${APACHE_LOG_DIR}/html5-error.log
-    CustomLog \${APACHE_LOG_DIR}/html5-access.log combined
-</VirtualHost>
-EOT"
-
-# Enable Apache virtual hosts
-sudo a2ensite powerps-core
-sudo a2ensite powerps-webapp
+# Enable Laravel virtual host
+sudo a2ensite powerps
 sudo a2enmod rewrite
 sudo systemctl restart apache2
 
-# Add domain entries to /etc/hosts
-echo "127.0.0.1 ${LARAVEL_SUBDOMAIN}" | sudo tee -a /etc/hosts
-echo "127.0.0.1 ${HTML5_SUBDOMAIN}" | sudo tee -a /etc/hosts
+# Add domain entry to /etc/hosts
+echo "127.0.0.1 ${DOMAIN_NAME}" | sudo tee -a /etc/hosts
 
 # Add schedule to cron job
 echo -e "${GREEN}Adding schedule to cron job...${NC}"
@@ -204,8 +153,10 @@ echo -e "${GREEN}Ensuring services start on reboot...${NC}"
 (crontab -l ; echo "@reboot systemctl restart mysql") | crontab -
 (crontab -l ; echo "@reboot /usr/bin/php /var/www/html/laravel-app/artisan serve &") | crontab -
 
+(crontab -l ; echo "@reboot /usr/bin/php /var/www/html/laravel-app/artisan serve &") | crontab -
+
 # Start Laravel server
-echo -e "${GREEN}Starting powerps core...${NC}"
+echo -e "${GREEN}Starting Laravel server...${NC}"
 cd /var/www/html/laravel-app
 php artisan serve &
 
@@ -213,4 +164,4 @@ php artisan serve &
 echo -e "${CYAN}==============================${NC}"
 echo -e "${YELLOW}  Setup Complete!${NC}"
 echo -e "${CYAN}==============================${NC}"
-echo -e "${GREEN}PowerPs installation complete!${NC}"
+echo -e "${GREEN}Laravel project with MySQL, PHPMyAdmin setup, and scheduled command complete!${NC}"
