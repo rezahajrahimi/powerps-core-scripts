@@ -7,7 +7,7 @@ NC='\033[0m' # No Color
 
 # Pretty title
 echo -e "${CYAN}==============================${NC}"
-echo -e "${YELLOW}  Setting up or Updating your Core and WebApp PowerPs${NC}"
+echo -e "${YELLOW}  Setting up or Updating your core and WebApp PowerPs${NC}"
 echo -e "${CYAN}==============================${NC}"
 
 # Prompt user for the subdomains
@@ -17,21 +17,21 @@ read -p "Enter your WebApp subdomain (e.g., web.domain.com): " HTML5_SUBDOMAIN
 # Update package lists and install necessary packages
 echo -e "${GREEN}Updating package lists and installing necessary packages...${NC}"
 sudo apt-get update
-sudo apt-get install -y apache2 mariadb-server php8.3 php8.3-mysql libapache2-mod-php8.3 php8.3-cli php8.3-zip php8.3-xml php8.3-mbstring php8.3-curl php8.3-gd composer unzip git expect
+sudo apt-get install -y apache2 mysql-server php8.3 php8.3-mysql libapache2-mod-php8.3 php8.3-cli php8.3-zip php8.3-xml php8.3-mbstring php8.3-curl php8.3-gd composer unzip git expect
 
-# Secure MariaDB Installation using expect
-echo -e "${GREEN}Securing MariaDB Installation...${NC}"
-SECURE_MARIADB=$(expect -c "
+# Secure MySQL Installation using expect
+echo -e "${GREEN}Securing MySQL Installation...${NC}"
+SECURE_MYSQL=$(expect -c "
 set timeout 10
 spawn sudo mysql_secure_installation
-expect \"Enter current password for root (enter for none):\"
-send \"\r\"
-expect \"Set root password?\"
-send \"y\r\"
+expect \"VALIDATE PASSWORD COMPONENT can be used to test passwords\"
+send \"n\r\"
 expect \"New password:\"
 send \"yourpassword\r\"
 expect \"Re-enter new password:\"
 send \"yourpassword\r\"
+expect \"Do you wish to continue with the password provided?\"
+send \"y\r\"
 expect \"Remove anonymous users?\"
 send \"y\r\"
 expect \"Disallow root login remotely?\"
@@ -42,19 +42,19 @@ expect \"Reload privilege tables now?\"
 send \"y\r\"
 expect eof
 ")
-echo "$SECURE_MARIADB"
+echo "$SECURE_MYSQL"
 
-# Create MariaDB database and user
+# Create MySQL database and user
 DB_NAME='powerps_db'
 DB_USER='powerps_user'
 // create a random password for the user
 DB_PASS=$(openssl rand -base64 12)
-echo -e "${GREEN}Creating MariaDB database and user...${NC}"
+
+echo -e "${GREEN}Creating MySQL database and user...${NC}"
 sudo mysql -e "CREATE DATABASE ${DB_NAME};"
 sudo mysql -e "CREATE USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';"
 sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';"
 sudo mysql -e "FLUSH PRIVILEGES;"
-
 
 # Check if the Laravel project directory exists
 if [ -d "/var/www/html/powerps-core" ]; then
@@ -86,7 +86,7 @@ sudo systemctl restart apache2
 echo -e "${GREEN}Installing Composer dependencies...${NC}"
 composer install
 
-# Set permissions for Laravel storage and bootstrap/cache directories
+# Set permissions for powerps core storage and bootstrap/cache directories
 echo -e "${GREEN}Setting permissions...${NC}"
 sudo chown -R www-data:www-data /var/www/html/powerps-core/storage
 sudo chown -R www-data:www-data /var/www/html/powerps-core/bootstrap/cache
@@ -141,8 +141,8 @@ else
     rm phpMyAdmin-latest-all-languages.zip
 fi
 
-# Set up Apache virtual host for Laravel
-echo -e "${GREEN}Setting up Apache virtual host for Laravel...${NC}"
+# Set up Apache virtual host for PowerPs Core
+echo -e "${GREEN}Setting up Apache virtual host for PowerPs Core...${NC}"
 sudo bash -c "cat <<EOT > /etc/apache2/sites-available/powerps-core.conf
 <VirtualHost *:80>
     ServerName ${LARAVEL_SUBDOMAIN}
@@ -167,6 +167,7 @@ else
     git clone https://github.com/rezahajrahimi/powerps-webapp /var/www/html/powerps-webapp
     cd /var/www/html/powerps-webapp
 fi
+echo "BASE_URL=${LARAVEL_SUBDOMAIN}" >> /var/www/html/powerps-webapp/assets/.env
 
 # Set up Apache virtual host for HTML5 project
 echo -e "${GREEN}Setting up Apache virtual host for HTML5 project...${NC}"
