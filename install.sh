@@ -7,12 +7,12 @@ NC='\033[0m' # No Color
 
 # Pretty title
 echo -e "${CYAN}==============================${NC}"
-echo -e "${YELLOW}  Setting up or Updating your Laravel and HTML5 Projects${NC}"
+echo -e "${YELLOW}  Setting up or Updating your core and WebApp PowerPs${NC}"
 echo -e "${CYAN}==============================${NC}"
 
 # Prompt user for the subdomains
-read -p "Enter your Laravel subdomain (e.g., core.domain.com): " LARAVEL_SUBDOMAIN
-read -p "Enter your HTML5 subdomain (e.g., web.domain.com): " HTML5_SUBDOMAIN
+read -p "Enter your Core subdomain (e.g., core.domain.com): " LARAVEL_SUBDOMAIN
+read -p "Enter your WebApp subdomain (e.g., web.domain.com): " HTML5_SUBDOMAIN
 
 # Update package lists and install necessary packages
 echo -e "${GREEN}Updating package lists and installing necessary packages...${NC}"
@@ -45,9 +45,11 @@ expect eof
 echo "$SECURE_MYSQL"
 
 # Create MySQL database and user
-DB_NAME='laravel_db'
-DB_USER='laravel_user'
-DB_PASS='password'
+DB_NAME='powerps_db'
+DB_USER='powerps_user'
+// create a random password for the user
+DB_PASS=$(openssl rand -base64 12)
+
 echo -e "${GREEN}Creating MySQL database and user...${NC}"
 sudo mysql -e "CREATE DATABASE ${DB_NAME};"
 sudo mysql -e "CREATE USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';"
@@ -113,14 +115,18 @@ php artisan key:generate
 # Run migrations
 echo -e "${GREEN}Running migrations...${NC}"
 php artisan migrate
-
-# Install PHPMyAdmin
-echo -e "${GREEN}Installing PHPMyAdmin...${NC}"
-cd /var/www/html
-wget https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.zip
-unzip phpMyAdmin-latest-all-languages.zip
-mv phpMyAdmin-*-all-languages phpmyadmin
-rm phpMyAdmin-latest-all-languages.zip
+# Check if phpMyAdmin is installed
+if [ -d "/var/www/html/phpmyadmin" ]; then
+    echo -e "${GREEN}phpMyAdmin is already installed.${NC}"
+else
+    # Install PHPMyAdmin
+    echo -e "${GREEN}Installing PHPMyAdmin...${NC}"
+    cd /var/www/html
+    wget https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.zip
+    unzip phpMyAdmin-latest-all-languages.zip
+    mv phpMyAdmin-*-all-languages phpmyadmin
+    rm phpMyAdmin-latest-all-languages.zip
+fi
 
 # Set up Apache virtual host for Laravel
 echo -e "${GREEN}Setting up Apache virtual host for Laravel...${NC}"
@@ -183,11 +189,10 @@ echo -e "${GREEN}Adding schedule to cron job...${NC}"
 echo -e "${GREEN}Ensuring services start on reboot...${NC}"
 (crontab -l ; echo "@reboot systemctl restart apache2") | crontab -
 (crontab -l ; echo "@reboot systemctl restart mysql") | crontab -
-
 (crontab -l ; echo "@reboot /usr/bin/php /var/www/html/laravel-app/artisan serve &") | crontab -
 
 # Start Laravel server
-echo -e "${GREEN}Starting Laravel server...${NC}"
+echo -e "${GREEN}Starting powerps core...${NC}"
 cd /var/www/html/laravel-app
 php artisan serve &
 
@@ -195,4 +200,4 @@ php artisan serve &
 echo -e "${CYAN}==============================${NC}"
 echo -e "${YELLOW}  Setup Complete!${NC}"
 echo -e "${CYAN}==============================${NC}"
-echo -e "${GREEN}Laravel project with MySQL, PHPMyAdmin setup, and scheduled command complete!${NC}"
+echo -e "${GREEN}PowerPs installation complete!${NC}"
