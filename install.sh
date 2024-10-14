@@ -1,5 +1,4 @@
 #!/bin/bash
-
 # Color codes
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
@@ -11,15 +10,10 @@ echo -e "${CYAN}==============================${NC}"
 echo -e "${YELLOW}  Setting up or Updating your Laravel Project${NC}"
 echo -e "${CYAN}==============================${NC}"
 
-# Updating package lists
-echo -e "${GREEN}Updating package lists...${NC}"
+# Update package lists and install necessary packages
+echo -e "${GREEN}Updating package lists and installing necessary packages...${NC}"
 sudo apt-get update
-
-# Installing necessary packages
-echo -e "${GREEN}Installing necessary packages...${NC}"
 sudo apt-get install -y apache2 mysql-server php8.3 php8.3-mysql libapache2-mod-php8.3 php8.3-cli php8.3-zip php8.3-xml php8.3-mbstring php8.3-curl php8.3-gd composer unzip git expect
-
-
 
 # Secure MySQL Installation using expect
 echo -e "${GREEN}Securing MySQL Installation...${NC}"
@@ -44,7 +38,6 @@ expect \"Reload privilege tables now?\"
 send \"y\r\"
 expect eof
 ")
-
 echo "$SECURE_MYSQL"
 
 # Create MySQL database and user
@@ -63,145 +56,72 @@ if [ -d "/var/www/html/laravel-app" ]; then
     echo -e "${GREEN}Updating the Laravel project repository...${NC}"
     cd /var/www/html/laravel-app
     git pull origin main
-    # Copy bolt.so extension to PHP extensions directory
-    echo -e "${GREEN}Copying bolt.so extension...${NC}"
-    sudo cp /var/www/html/laravel-app/bolt.so /usr/lib/php/20230831/
-
-    # Get the location of the php.ini file
-    PHP_INI_FILE=$(php --ini | grep "Loaded Configuration File" | cut -d ":" -f 2- | tr -d " ")
-    
-        echo -e "${GREEN}Installing Composer dependencies...${NC}"
-    composer install
-# Set permissions for Laravel storage and bootstrap/cache directories
-sudo chown -R www-data:www-data /var/www/html/laravel-app/storage
-sudo chown -R www-data:www-data /var/www/html/laravel-app/bootstrap/cache
-
-            # Generate app key
-
-        echo -e "${GREEN}Generating app key...${NC}"
-        php artisan key:generate
-
-        # Run migrations
-        echo -e "${GREEN}Running migrations...${NC}"
-        php artisan migrate
-
-
 else
     # Clone the Laravel project repository
     echo -e "${GREEN}Cloning Laravel project repository...${NC}"
     git clone https://github.com/rezahajrahimi/powerps-core /var/www/html/laravel-app
     cd /var/www/html/laravel-app
-        # Copy bolt.so extension to PHP extensions directory
-    echo -e "${GREEN}Copying bolt.so extension...${NC}"
-    sudo cp /var/www/html/laravel-app/bolt.so /usr/lib/php/20230831/
-
-    # Get the location of the php.ini file
-    PHP_INI_FILE=$(php --ini | grep "Loaded Configuration File" | cut -d ":" -f 2- | tr -d " ")
-
-    # Prompt user for .env variables only if .env does not exist
-    if [ ! -f ".env" ]; then
-        echo -e "${GREEN}Installing Composer dependencies...${NC}"
-        composer install
-        
-
-        echo -e "${CYAN}Please enter the following environment variables for your Laravel project:${NC}"
-        read -p "App Name: " APP_NAME
-        read -p "Environment (local/production): " APP_ENV
-        read -p "App Debug (true/false): " APP_DEBUG
-        read -p "App URL: " APP_URL
-
-        read -p "NOWPayments API Key: " NOWPAYMENTS_API_KEY
-        read -p "Telegram Bot Token: " TELEGRAM_BOT_TOKEN
-        read -p "Telegram Admin ID: " TELEGRAM_ADMIN_ID
-        read -p "Zarinpal Merchant ID: " ZARINPAL_MERCHANT_ID
-        read -p "URL for Front-End Project: " FRONT_URL
-
-        # Set up Laravel environment
-        echo -e "${GREEN}Setting up Laravel environment...${NC}"
-        cp .env.example .env
-
-        # Configure .env file with user input
-        echo -e "${GREEN}Configuring .env file...${NC}"
-        sed -i "s/^APP_NAME=.*/APP_NAME=${APP_NAME}/" .env
-        sed -i "s/^APP_ENV=.*/APP_ENV=${APP_ENV}/" .env
-        sed -i "s/^APP_DEBUG=.*/APP_DEBUG=${APP_DEBUG}/" .env
-        sed -i "s|^APP_URL=.*|APP_URL=${APP_URL}|" .env
-
-        sed -i "s/^DB_DATABASE=.*/DB_DATABASE=${DB_NAME}/" .env
-        sed -i "s/^DB_USERNAME=.*/DB_USERNAME=${DB_USER}/" .env
-        sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=${DB_PASS}/" .env
-
-        echo "NOWPAYMENTS_API_KEY=${NOWPAYMENTS_API_KEY}" >> .env
-        echo "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}" >> .env
-        echo "TELEGRAM_ADMIN_ID=${TELEGRAM_ADMIN_ID}" >> .env
-        echo "ZARINPAL_MERCHANT_ID=${ZARINPAL_MERCHANT_ID}" >> .env
-        echo "FRONT_URL=${FRONT_URL}" >> .env
-        
-
-        # Generate app key
-
-        echo -e "${GREEN}Generating app key...${NC}"
-        php artisan key:generate
-
-        # Run migrations
-        echo -e "${GREEN}Running migrations...${NC}"
-        php artisan migrate
-
-        # Install PHPMyAdmin
-        echo -e "${GREEN}Installing PHPMyAdmin...${NC}"
-        cd /var/www/html
-        wget https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.zip
-        unzip phpMyAdmin-latest-all-languages.zip
-        mv phpMyAdmin-*-all-languages phpmyadmin
-        rm phpMyAdmin-latest-all-languages.zip
-
-
-        # Add bolt.so extension to main php.ini
-        echo -e "${GREEN}Adding bolt.so extension to php.ini...${NC}"
-        sudo sh -c "echo 'extension=bolt.so' >> ${PHP_INI_FILE}"
-
-        # Restart Apache to apply changes
-        echo -e "${GREEN}Restarting Apache to apply changes...${NC}"
-        sudo systemctl restart apache2
-    fi
 fi
 
+# Copy bolt.so extension to PHP extensions directory
+echo -e "${GREEN}Copying bolt.so extension...${NC}"
+sudo cp /var/www/html/laravel-app/bolt.so /usr/lib/php/20230831/
+PHP_INI_FILE=$(php --ini | grep "Loaded Configuration File" | cut -d ":" -f 2- | tr -d " ")
+
+# Add bolt.so extension to main php.ini
+echo -e "${GREEN}Adding bolt.so extension to php.ini...${NC}"
+sudo sh -c "echo 'extension=bolt.so' >> ${PHP_INI_FILE}"
+
+# Restart Apache to apply changes
+echo -e "${GREEN}Restarting Apache to apply changes...${NC}"
+sudo systemctl restart apache2
+
+# Install Composer dependencies
+echo -e "${GREEN}Installing Composer dependencies...${NC}"
+composer install
+
 # Set permissions for Laravel storage and bootstrap/cache directories
+echo -e "${GREEN}Setting permissions...${NC}"
 sudo chown -R www-data:www-data /var/www/html/laravel-app/storage
 sudo chown -R www-data:www-data /var/www/html/laravel-app/bootstrap/cache
 
+# Generate app key
+echo -e "${GREEN}Generating app key...${NC}"
+php artisan key:generate
+
+# Run migrations
+echo -e "${GREEN}Running migrations...${NC}"
+php artisan migrate
+
+# Install PHPMyAdmin
+echo -e "${GREEN}Installing PHPMyAdmin...${NC}"
+cd /var/www/html
+wget https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.zip
+unzip phpMyAdmin-latest-all-languages.zip
+mv phpMyAdmin-*-all-languages phpmyadmin
+rm phpMyAdmin-latest-all-languages.zip
+
 # Set up Apache virtual host for Laravel
 echo -e "${GREEN}Setting up Apache virtual host for Laravel...${NC}"
-# Add test domain entry to /etc/hosts
-sudo echo '127.0.0.1 powerps' >> /etc/hosts
-
-# Create Apache2 virtual host file for Laravel
-sudo echo '<VirtualHost *:80>
+sudo bash -c 'cat <<EOT > /etc/apache2/sites-available/powerps.conf
+<VirtualHost *:80>
     ServerName powerps
     DocumentRoot /var/www/html/laravel-app/public
-
     <Directory /var/www/html/laravel-app>
         AllowOverride All
     </Directory>
-
     ErrorLog ${APACHE_LOG_DIR}/laravel-error.log
     CustomLog ${APACHE_LOG_DIR}/laravel-access.log combined
-</VirtualHost>' > /etc/apache2/sites-available/powerps
+</VirtualHost>
+EOT'
 
 # Enable Laravel virtual host
-sudo a2ensite powerps
-
-# Reload Apache2 configuration
-# sudo systemctl reload apache2
-
-
-# Enable new site and rewrite module
-echo -e "${GREEN}Enabling new site and rewrite module...${NC}"
-# sudo a2ensite laravel
 sudo a2ensite powerps
 sudo a2enmod rewrite
 sudo systemctl restart apache2
 
+# Add test domain entry to /etc/hosts
+echo '127.0.0.1 powerps' | sudo tee -a /etc/hosts
 
 # Add schedule to cron job
 echo -e "${GREEN}Adding schedule to cron job...${NC}"
@@ -218,6 +138,7 @@ echo -e "${GREEN}Starting Laravel server...${NC}"
 cd /var/www/html/laravel-app
 php artisan serve &
 
+# Completion message
 echo -e "${CYAN}==============================${NC}"
 echo -e "${YELLOW}  Setup Complete!${NC}"
 echo -e "${CYAN}==============================${NC}"
