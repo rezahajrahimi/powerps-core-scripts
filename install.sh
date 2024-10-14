@@ -57,21 +57,21 @@ sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';
 sudo mysql -e "FLUSH PRIVILEGES;"
 
 # Check if the Laravel project directory exists
-if [ -d "/var/www/html/laravel-app" ]; then
+if [ -d "/var/www/html/powerps-core" ]; then
     # If it exists, update the repository
     echo -e "${GREEN}Updating the Laravel project repository...${NC}"
-    cd /var/www/html/laravel-app
+    cd /var/www/html/powerps-core
     git pull origin main
 else
     # Clone the Laravel project repository
     echo -e "${GREEN}Cloning Laravel project repository...${NC}"
-    git clone https://github.com/rezahajrahimi/powerps-core /var/www/html/laravel-app
-    cd /var/www/html/laravel-app
+    git clone https://github.com/rezahajrahimi/powerps-core /var/www/html/powerps-core
+    cd /var/www/html/powerps-core
 fi
 
 # Copy bolt.so extension to PHP extensions directory
 echo -e "${GREEN}Copying bolt.so extension...${NC}"
-sudo cp /var/www/html/laravel-app/bolt.so /usr/lib/php/20230831/
+sudo cp /var/www/html/powerps-core/bolt.so /usr/lib/php/20230831/
 PHP_INI_FILE=$(php --ini | grep "Loaded Configuration File" | cut -d ":" -f 2- | tr -d " ")
 
 # Add bolt.so extension to main php.ini
@@ -88,24 +88,37 @@ composer install
 
 # Set permissions for Laravel storage and bootstrap/cache directories
 echo -e "${GREEN}Setting permissions...${NC}"
-sudo chown -R www-data:www-data /var/www/html/laravel-app/storage
-sudo chown -R www-data:www-data /var/www/html/laravel-app/bootstrap/cache
+sudo chown -R www-data:www-data /var/www/html/powerps-core/storage
+sudo chown -R www-data:www-data /var/www/html/powerps-core/bootstrap/cache
 
 # Set up environment variables if not already set
 echo -e "${GREEN}Setting up environment variables...${NC}"
-if [ ! -f "/var/www/html/laravel-app/.env" ]; then
-    cp /var/www/html/laravel-app/.env.example /var/www/html/laravel-app/.env
-    echo "APP_NAME=Laravel" >> /var/www/html/laravel-app/.env
-    echo "APP_ENV=local" >> /var/www/html/laravel-app/.env
-    echo "APP_KEY=" >> /var/www/html/laravel-app/.env
-    echo "APP_DEBUG=true" >> /var/www/html/laravel-app/.env
-    echo "APP_URL=http://${LARAVEL_SUBDOMAIN}" >> /var/www/html/laravel-app/.env
-    echo "DB_CONNECTION=mysql" >> /var/www/html/laravel-app/.env
-    echo "DB_HOST=127.0.0.1" >> /var/www/html/laravel-app/.env
-    echo "DB_PORT=3306" >> /var/www/html/laravel-app/.env
-    echo "DB_DATABASE=${DB_NAME}" >> /var/www/html/laravel-app/.env
-    echo "DB_USERNAME=${DB_USER}" >> /var/www/html/laravel-app/.env
-    echo "DB_PASSWORD=${DB_PASS}" >> /var/www/html/laravel-app/.env
+if [ ! -f "/var/www/html/powerps-core/.env" ]; then
+    cp /var/www/html/powerps-core/.env.example /var/www/html/powerps-core/.env
+    echo "APP_NAME=powerps" >> /var/www/html/powerps-core/.env
+    echo "APP_ENV=local" >> /var/www/html/powerps-core/.env
+    echo "APP_KEY=" >> /var/www/html/powerps-core/.env
+    echo "APP_DEBUG=true" >> /var/www/html/powerps-core/.env
+    echo "APP_URL=http://${LARAVEL_SUBDOMAIN}" >> /var/www/html/powerps-core/.env
+    echo "FRONT_URL=https://${HTML5_SUBDOMAIN}" >> /var/www/html/powerps-core/.env
+
+    echo "DB_CONNECTION=mysql" >> /var/www/html/powerps-core/.env
+    echo "DB_HOST=127.0.0.1" >> /var/www/html/powerps-core/.env
+    echo "DB_PORT=3306" >> /var/www/html/powerps-core/.env
+    echo "DB_DATABASE=${DB_NAME}" >> /var/www/html/powerps-core/.env
+    echo "DB_USERNAME=${DB_USER}" >> /var/www/html/powerps-core/.env
+    echo "DB_PASSWORD=${DB_PASS}" >> /var/www/html/powerps-core/.env
+
+    read -p "Enter your TELEGRAM_BOT_TOKEN (e.g., botxxxxxxxxxxxxxxxxxxxxxx): " TELEGRAM_BOT_TOKEN
+    echo "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}" >> /var/www/html/powerps-core/.env
+    echo "TELEGRAM_API_ENDPOINT=https://api.telegram.org" >> /var/www/html/powerps-core/.env
+    read -p "Enter your TELEGRAM_ADMIN_ID (e.g., 91155536): " TELEGRAM_ADMIN_ID
+    echo "TELEGRAM_ADMIN_ID=${TELEGRAM_ADMIN_ID}" >> /var/www/html/powerps-core/.env
+    read -p "Enter your ZARINPAL_MERCHANT_ID (e.g., xxxxxx-xxxxxxxxx-xxxxxxxx-xxxxx): " ZARINPAL_MERCHANT_ID
+    echo "ZARINPAL_MERCHANT_ID=${ZARINPAL_MERCHANT_ID}" >> /var/www/html/powerps-core/.env
+    read -p "Enter your NOWPAYMENTS_API_KEY (e.g., xxxxxx-xxxxxxxxx-xxxxxxxx-xxxxx): " NOWPAYMENTS_API_KEY
+    echo "NOWPAYMENTS_API_KEY=${NOWPAYMENTS_API_KEY}" >> /var/www/html/powerps-core/.env
+
 fi
 
 # Generate app key
@@ -133,8 +146,8 @@ echo -e "${GREEN}Setting up Apache virtual host for Laravel...${NC}"
 sudo bash -c "cat <<EOT > /etc/apache2/sites-available/powerps-core.conf
 <VirtualHost *:80>
     ServerName ${LARAVEL_SUBDOMAIN}
-    DocumentRoot /var/www/html/laravel-app/public
-    <Directory /var/www/html/laravel-app>
+    DocumentRoot /var/www/html/powerps-core/public
+    <Directory /var/www/html/powerps-core>
         AllowOverride All
     </Directory>
     ErrorLog \${APACHE_LOG_DIR}/laravel-error.log
@@ -183,17 +196,17 @@ echo "127.0.0.1 ${HTML5_SUBDOMAIN}" | sudo tee -a /etc/hosts
 
 # Add schedule to cron job
 echo -e "${GREEN}Adding schedule to cron job...${NC}"
-(crontab -l ; echo "* * * * * cd /var/www/html/laravel-app && php artisan schedule:run >> /dev/null 2>&1") | crontab -
+(crontab -l ; echo "* * * * * cd /var/www/html/powerps-core && php artisan schedule:run >> /dev/null 2>&1") | crontab -
 
 # Ensure services start on reboot
 echo -e "${GREEN}Ensuring services start on reboot...${NC}"
 (crontab -l ; echo "@reboot systemctl restart apache2") | crontab -
 (crontab -l ; echo "@reboot systemctl restart mysql") | crontab -
-(crontab -l ; echo "@reboot /usr/bin/php /var/www/html/laravel-app/artisan serve &") | crontab -
+(crontab -l ; echo "@reboot /usr/bin/php /var/www/html/powerps-core/artisan serve &") | crontab -
 
 # Start Laravel server
 echo -e "${GREEN}Starting powerps core...${NC}"
-cd /var/www/html/laravel-app
+cd /var/www/html/powerps-core
 php artisan serve &
 
 # Completion message
