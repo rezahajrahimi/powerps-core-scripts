@@ -17,7 +17,7 @@ read -p "Enter your WebApp subdomain (e.g., web.domain.com): " HTML5_SUBDOMAIN
 # Update package lists and install necessary packages
 echo -e "${GREEN}Updating package lists and installing necessary packages...${NC}"
 sudo apt-get update
-sudo apt-get install -y apache2 mysql-server php8.3 php8.3-mysql libapache2-mod-php8.3 php8.3-cli php8.3-zip php8.3-xml php8.3-mbstring php8.3-curl php8.3-gd composer unzip git expect
+sudo apt-get install -y apache2 mysql-server php8.3 php8.3-mysql libapache2-mod-php8.3 php8.3-cli php8.3-zip php8.3-xml php8.3-mbstring php8.3-curl php8.3-gd php-imagick libmagickwand-dev composer unzip git expect
 
 # Secure MySQL Installation using expect
 echo -e "${GREEN}Securing MySQL Installation...${NC}"
