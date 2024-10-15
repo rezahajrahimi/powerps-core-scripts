@@ -69,14 +69,7 @@ else
     cd /var/www/html/laravel-app
 fi
 
-# Copy bolt.so extension to PHP extensions directory
-echo -e "${GREEN}Copying bolt.so extension...${NC}"
-sudo cp /var/www/html/laravel-app/bolt.so /usr/lib/php/20230831/
-PHP_INI_FILE=$(php --ini | grep "Loaded Configuration File" | cut -d ":" -f 2- | tr -d " ")
 
-# Add bolt.so extension to main php.ini
-echo -e "${GREEN}Adding bolt.so extension to php.ini...${NC}"
-sudo sh -c "echo 'extension=bolt.so' >> ${PHP_INI_FILE}"
 
 # Restart Apache to apply changes
 echo -e "${GREEN}Restarting Apache to apply changes...${NC}"
