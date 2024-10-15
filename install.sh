@@ -69,6 +69,8 @@ else
     cd /var/www/html/laravel-app
     echo -e "${GREEN}Add Extensions...${NC}"
 sudo sed -i '1i extension=/var/www/html/laravel-app/bolt.so' /etc/php/8.3/apache2/php.ini
+sudo sed -i '1i extension=/var/www/html/laravel-app/bolt.so' /etc/php/8.3/cli/php.ini
+
 
 fi
 
@@ -97,7 +99,7 @@ if [ ! -f "/var/www/html/laravel-app/.env" ]; then
 
     // check if APP_ENV is already set remove it and add it again
     sed -i '/APP_ENV/d' /var/www/html/laravel-app/.env
-    echo "APP_ENV=local" >> /var/www/html/laravel-app/.env
+    echo "APP_ENV=production" >> /var/www/html/laravel-app/.env
     sed -i '/APP_KEY/d' /var/www/html/laravel-app/.env
     echo "APP_KEY=" >> /var/www/html/laravel-app/.env
 
@@ -106,6 +108,8 @@ if [ ! -f "/var/www/html/laravel-app/.env" ]; then
 
     sed -i '/APP_URL/d' /var/www/html/laravel-app/.env
     echo "APP_URL=https://${LARAVEL_SUBDOMAIN}" >> /var/www/html/laravel-app/.env
+    echo "FRONT_URL=https://${HTML5_SUBDOMAIN}" >> /var/www/html/laravel-app/.env
+
     sed -i '/DB_CONNECTION/d' /var/www/html/laravel-app/.env
     echo "DB_CONNECTION=mysql" >> /var/www/html/laravel-app/.env
     sed -i '/DB_HOST/d' /var/www/html/laravel-app/.env
