@@ -138,6 +138,8 @@ php artisan key:generate
 # Run migrations
 echo -e "${GREEN}Running migrations...${NC}"
 php artisan migrate
+# Run Link Storage
+php artisan storage:link
 # Check if phpMyAdmin is installed
 if [ -d "/var/www/html/phpmyadmin" ]; then
     echo -e "${GREEN}phpMyAdmin is already installed.${NC}"
