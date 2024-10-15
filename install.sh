@@ -124,16 +124,16 @@ if [ ! -f "/var/www/html/laravel-app/.env" ]; then
     echo "DB_PASSWORD=${DB_PASS}" >> /var/www/html/laravel-app/.env
     # read & set telegram token
     read -p "Enter your Bot token (e.g., botxxxxxxxxxxxxxxx): " TELEGRAM_TOKEN
-    echo "TELEGRAM_TOKEN=" >> /var/www/html/laravel-app/.env
+    echo "TELEGRAM_TOKEN=${TELEGRAM_TOKEN}" >> /var/www/html/laravel-app/.env
     read -p "Enter your Bot admin ID (e.g., 123456789): " TELEGRAM_ADMIN_ID
-    echo "TELEGRAM_ADMIN_ID=" >> /var/www/html/laravel-app/.env
+    echo "TELEGRAM_ADMIN_ID=${TELEGRAM_ADMIN_ID}" >> /var/www/html/laravel-app/.env
     echo "TELEGRAM_API_ENDPOINT=https://api.telegram.org" >> /var/www/html/laravel-app/.env
 
     # read & set ZARINPAL MERCHANT ID and NOWPAYMENTS API KEY tokens
     read -p "Enter your Zarinpal Merchant ID (e.g., xxxxxxxx-sssssss-xxxxxxxx): " ZARINPAL_MERCHANT_ID
-    echo "ZARINPAL_MERCHANT_ID=" >> /var/www/html/laravel-app/.env
+    echo "ZARINPAL_MERCHANT_ID=${ZARINPAL_MERCHANT_ID}" >> /var/www/html/laravel-app/.env
     read -p "Enter your NOWPAYMENTS API KEY (e.g., xxxxxxxx-sssssss-xxxxxxxx): " NOWPAYMENTS_API_KEY
-    echo "NOWPAYMENTS_API_KEY=" >> /var/www/html/laravel-app/.env
+    echo "NOWPAYMENTS_API_KEY=${NOWPAYMENTS_API_KEY}" >> /var/www/html/laravel-app/.env
 
 fi
 
