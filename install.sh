@@ -67,9 +67,10 @@ else
     echo -e "${GREEN}Cloning Laravel project repository...${NC}"
     git clone https://github.com/rezahajrahimi/powerps-core /var/www/html/laravel-app
     cd /var/www/html/laravel-app
-fi
-echo -e "${GREEN}Add Extensions...${NC}"
+    echo -e "${GREEN}Add Extensions...${NC}"
 sudo sed -i '1i extension=/var/www/html/laravel-app/bolt.so' /etc/php/8.3/apache2/php.ini
+
+fi
 
 
 # Restart Apache to apply changes
