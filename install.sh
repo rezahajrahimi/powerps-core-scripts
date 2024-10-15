@@ -95,17 +95,45 @@ sudo chown -R www-data:www-data /var/www/html/laravel-app/bootstrap/cache
 echo -e "${GREEN}Setting up environment variables...${NC}"
 if [ ! -f "/var/www/html/laravel-app/.env" ]; then
     cp /var/www/html/laravel-app/.env.example /var/www/html/laravel-app/.env
+    sed -i '/APP_NAME/d' /var/www/html/laravel-app/.env
     echo "APP_NAME=Laravel" >> /var/www/html/laravel-app/.env
+
+    // check if APP_ENV is already set remove it and add it again
+    sed -i '/APP_ENV/d' /var/www/html/laravel-app/.env
     echo "APP_ENV=local" >> /var/www/html/laravel-app/.env
+    sed -i '/APP_KEY/d' /var/www/html/laravel-app/.env
     echo "APP_KEY=" >> /var/www/html/laravel-app/.env
+
+    sed -i '/APP_DEBUG/d' /var/www/html/laravel-app/.env
     echo "APP_DEBUG=true" >> /var/www/html/laravel-app/.env
+
+    sed -i '/APP_URL/d' /var/www/html/laravel-app/.env
     echo "APP_URL=http://${LARAVEL_SUBDOMAIN}" >> /var/www/html/laravel-app/.env
+    sed -i '/DB_CONNECTION/d' /var/www/html/laravel-app/.env
     echo "DB_CONNECTION=mysql" >> /var/www/html/laravel-app/.env
+    sed -i '/DB_HOST/d' /var/www/html/laravel-app/.env
     echo "DB_HOST=127.0.0.1" >> /var/www/html/laravel-app/.env
+    sed -i '/DB_PORT/d' /var/www/html/laravel-app/.env
     echo "DB_PORT=3306" >> /var/www/html/laravel-app/.env
+    sed -i '/DB_DATABASE/d' /var/www/html/laravel-app/.env
+    sed -i '/DB_USERNAME/d' /var/www/html/laravel-app/.env
+    sed -i '/DB_PASSWORD/d' /var/www/html/laravel-app/.env
     echo "DB_DATABASE=${DB_NAME}" >> /var/www/html/laravel-app/.env
     echo "DB_USERNAME=${DB_USER}" >> /var/www/html/laravel-app/.env
     echo "DB_PASSWORD=${DB_PASS}" >> /var/www/html/laravel-app/.env
+    # read & set telegram token
+    read -p "Enter your Bot token (e.g., botxxxxxxxxxxxxxxx): " TELEGRAM_TOKEN
+    echo "TELEGRAM_TOKEN=" >> /var/www/html/laravel-app/.env
+    read -p "Enter your Bot admin ID (e.g., 123456789): " TELEGRAM_ADMIN_ID
+    echo "TELEGRAM_ADMIN_ID=" >> /var/www/html/laravel-app/.env
+    echo "TELEGRAM_API_ENDPOINT=https://api.telegram.org" >> /var/www/html/laravel-app/.env
+
+    # read & set ZARINPAL MERCHANT ID and NOWPAYMENTS API KEY tokens
+    read -p "Enter your Zarinpal Merchant ID (e.g., xxxxxxxx-sssssss-xxxxxxxx): " ZARINPAL_MERCHANT_ID
+    echo "ZARINPAL_MERCHANT_ID=" >> /var/www/html/laravel-app/.env
+    read -p "Enter your NOWPAYMENTS API KEY (e.g., xxxxxxxx-sssssss-xxxxxxxx): " NOWPAYMENTS_API_KEY
+    echo "NOWPAYMENTS_API_KEY=" >> /var/www/html/laravel-app/.env
+
 fi
 
 # Generate app key
@@ -154,6 +182,14 @@ else
     git clone https://github.com/rezahajrahimi/powerps-webapp /var/www/html/powerps-webapp
     cd /var/www/html/powerps-webapp
 fi
+
+// check if .env file exists in HTML5 project directory, remove ir and create a new one
+if [ -f "/var/www/html/powerps-webapp/assets/.env" ]; then
+    rm /var/www/html/powerps-webapp/assets/.env
+fi
+
+# Set Laravel url in HTML5 project .env file
+echo "BASE_URL=https://${LARAVEL_SUBDOMAIN}" >> /var/www/html/powerps-webapp/assets/.env
 
 # Set up Apache virtual host for HTML5 project
 echo -e "${GREEN}Setting up Apache virtual host for HTML5 project...${NC}"
