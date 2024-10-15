@@ -108,7 +108,7 @@ if [ ! -f "/var/www/html/laravel-app/.env" ]; then
     echo "APP_DEBUG=true" >> /var/www/html/laravel-app/.env
 
     sed -i '/APP_URL/d' /var/www/html/laravel-app/.env
-    echo "APP_URL=http://${LARAVEL_SUBDOMAIN}" >> /var/www/html/laravel-app/.env
+    echo "APP_URL=https://${LARAVEL_SUBDOMAIN}" >> /var/www/html/laravel-app/.env
     sed -i '/DB_CONNECTION/d' /var/www/html/laravel-app/.env
     echo "DB_CONNECTION=mysql" >> /var/www/html/laravel-app/.env
     sed -i '/DB_HOST/d' /var/www/html/laravel-app/.env
@@ -219,7 +219,7 @@ echo "127.0.0.1 ${HTML5_SUBDOMAIN}" | sudo tee -a /etc/hosts
 
 # Add schedule to cron job
 echo -e "${GREEN}Adding schedule to cron job...${NC}"
-(crontab -l ; echo "* * * * * cd /var/www/html/laravel-app && php artisan schedule:run >> /dev/null 2>&1") | crontab -
+# (crontab -l ; echo "* * * * * cd /var/www/html/laravel-app && php artisan schedule:run >> /dev/null 2>&1") | crontab -
 
 # Ensure services start on reboot
 echo -e "${GREEN}Ensuring services start on reboot...${NC}"
