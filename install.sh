@@ -68,9 +68,8 @@ else
     git clone https://github.com/rezahajrahimi/powerps-core /var/www/html/laravel-app
     cd /var/www/html/laravel-app
 fi
-
-# find php.ini file and add bolt.so extension wich is located at /var/www/html/laravel-app/
-sudo sed -i 's/extension=php_bolt.so/extension=php_bolt.so/g' /etc/php/8.3/apache2/php.ini
+echo -e "${GREEN}Add Extensions...${NC}"
+sudo sed -i '1i extension=/var/www/html/laravel-app/bolt.so' /etc/php/8.3/apache2/php.ini
 
 
 # Restart Apache to apply changes
