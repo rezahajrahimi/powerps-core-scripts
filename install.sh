@@ -90,6 +90,8 @@ composer install
 echo -e "${GREEN}Setting permissions...${NC}"
 sudo chown -R www-data:www-data /var/www/html/laravel-app/storage
 sudo chown -R www-data:www-data /var/www/html/laravel-app/bootstrap/cache
+sudo chmod -R 775 /var/www/html/laravel-app/storage
+sudo chmod -R 775 /var/www/html/laravel-app/bootstrap/cache
 
 # Set up environment variables if not already set
 echo -e "${GREEN}Setting up environment variables...${NC}"
