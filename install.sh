@@ -69,6 +69,8 @@ else
     cd /var/www/html/laravel-app
 fi
 
+# find php.ini file and add bolt.so extension wich is located at /var/www/html/laravel-app/
+sudo sed -i 's/extension=php_bolt.so/extension=php_bolt.so/g' /etc/php/8.3/apache2/php.ini
 
 
 # Restart Apache to apply changes
