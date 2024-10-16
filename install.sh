@@ -125,7 +125,7 @@ if [ ! -f "/var/www/html/laravel-app/.env" ]; then
     # read & set telegram token
     read -p "Enter your Bot token (e.g., botxxxxxxxxxxxxxxx): " TELEGRAM_BOT_TOKEN
     sed -i '/TELEGRAM_BOT_TOKEN/d' /var/www/html/laravel-app/.env
-    echo "TELEGRAM_BOT_TOKEN=${TELEGRAM_TOKEN}" >> /var/www/html/laravel-app/.env
+    echo "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}" >> /var/www/html/laravel-app/.env
 
     read -p "Enter your Bot admin ID (e.g., 123456789): " TELEGRAM_ADMIN_ID
     sed -i '/TELEGRAM_ADMIN_ID/d' /var/www/html/laravel-app/.env
