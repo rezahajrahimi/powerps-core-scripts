@@ -123,9 +123,9 @@ if [ ! -f "/var/www/html/laravel-app/.env" ]; then
     echo "DB_USERNAME=${DB_USER}" >> /var/www/html/laravel-app/.env
     echo "DB_PASSWORD=${DB_PASS}" >> /var/www/html/laravel-app/.env
     # read & set telegram token
-    read -p "Enter your Bot token (e.g., botxxxxxxxxxxxxxxx): " TELEGRAM_TOKEN
-    sed -i '/TELEGRAM_TOKEN/d' /var/www/html/laravel-app/.env
-    echo "TELEGRAM_TOKEN=${TELEGRAM_TOKEN}" >> /var/www/html/laravel-app/.env
+    read -p "Enter your Bot token (e.g., botxxxxxxxxxxxxxxx): " TELEGRAM_BOT_TOKEN
+    sed -i '/TELEGRAM_BOT_TOKEN/d' /var/www/html/laravel-app/.env
+    echo "TELEGRAM_BOT_TOKEN=${TELEGRAM_TOKEN}" >> /var/www/html/laravel-app/.env
 
     read -p "Enter your Bot admin ID (e.g., 123456789): " TELEGRAM_ADMIN_ID
     sed -i '/TELEGRAM_ADMIN_ID/d' /var/www/html/laravel-app/.env
@@ -230,7 +230,7 @@ echo "127.0.0.1 ${HTML5_SUBDOMAIN}" | sudo tee -a /etc/hosts
 
 # Add schedule to cron job
 echo -e "${GREEN}Adding schedule to cron job...${NC}"
-#(crontab -l ; echo "* * * * * cd /var/www/html/laravel-app && php artisan schedule:run >> /dev/null 2>&1") | crontab -
+(crontab -l ; echo "* * * * * cd /var/www/html/laravel-app && php artisan schedule:run >> /dev/null 2>&1") | crontab -
 
 # Ensure services start on reboot
 echo -e "${GREEN}Ensuring services start on reboot...${NC}"
