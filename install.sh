@@ -124,15 +124,23 @@ if [ ! -f "/var/www/html/laravel-app/.env" ]; then
     echo "DB_PASSWORD=${DB_PASS}" >> /var/www/html/laravel-app/.env
     # read & set telegram token
     read -p "Enter your Bot token (e.g., botxxxxxxxxxxxxxxx): " TELEGRAM_TOKEN
+    sed -i '/TELEGRAM_TOKEN/d' /var/www/html/laravel-app/.env
     echo "TELEGRAM_TOKEN=${TELEGRAM_TOKEN}" >> /var/www/html/laravel-app/.env
+
     read -p "Enter your Bot admin ID (e.g., 123456789): " TELEGRAM_ADMIN_ID
+    sed -i '/TELEGRAM_ADMIN_ID/d' /var/www/html/laravel-app/.env
     echo "TELEGRAM_ADMIN_ID=${TELEGRAM_ADMIN_ID}" >> /var/www/html/laravel-app/.env
+
+    sed -i '/TELEGRAM_API_ENDPOINT/d' /var/www/html/laravel-app/.env
     echo "TELEGRAM_API_ENDPOINT=https://api.telegram.org" >> /var/www/html/laravel-app/.env
 
     # read & set ZARINPAL MERCHANT ID and NOWPAYMENTS API KEY tokens
     read -p "Enter your Zarinpal Merchant ID (e.g., xxxxxxxx-sssssss-xxxxxxxx): " ZARINPAL_MERCHANT_ID
+    sed -i '/ZARINPAL_MERCHANT_ID/d' /var/www/html/laravel-app/.env
     echo "ZARINPAL_MERCHANT_ID=${ZARINPAL_MERCHANT_ID}" >> /var/www/html/laravel-app/.env
+
     read -p "Enter your NOWPAYMENTS API KEY (e.g., xxxxxxxx-sssssss-xxxxxxxx): " NOWPAYMENTS_API_KEY
+    sed -i '/NOWPAYMENTS_API_KEY/d' /var/www/html/laravel-app/.env
     echo "NOWPAYMENTS_API_KEY=${NOWPAYMENTS_API_KEY}" >> /var/www/html/laravel-app/.env
 
 fi
@@ -222,7 +230,7 @@ echo "127.0.0.1 ${HTML5_SUBDOMAIN}" | sudo tee -a /etc/hosts
 
 # Add schedule to cron job
 echo -e "${GREEN}Adding schedule to cron job...${NC}"
-(crontab -l ; echo "* * * * * cd /var/www/html/laravel-app && php artisan schedule:run >> /dev/null 2>&1") | crontab -
+#(crontab -l ; echo "* * * * * cd /var/www/html/laravel-app && php artisan schedule:run >> /dev/null 2>&1") | crontab -
 
 # Ensure services start on reboot
 echo -e "${GREEN}Ensuring services start on reboot...${NC}"
