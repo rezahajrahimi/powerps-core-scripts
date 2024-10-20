@@ -91,10 +91,11 @@ sudo chmod -R 775 /var/www/html/laravel-app/storage
 sudo chmod -R 775 /var/www/html/laravel-app/bootstrap/cache
 
 
-
-mkdir -p /var/www/html/laravel-app/storage/app/public/images/transaction_images
-sudo chmod -R 775 /var/www/html/laravel-app/storage/app/public/images/transaction_images
-sudo chown -R www-data:www-data /var/www/html/laravel-app/storage/app/public/images/transaction_images
+mkdir -p /var/www/html/laravel-app/public/images/transaction_images
+sudo chmod -R 775 /var/www/html/laravel-app/public/images/transaction_images
+sudo chown -R www-data:www-data /var/www/html/laravel-app/public/images/transaction_images
+mkdir -p /var/www/html/laravel-app/public/images
+sudo chmod -R 777 /var/www/html/laravel-app/public/images/
 
 
 # Set up environment variables if not already set
