@@ -1,4 +1,5 @@
 #!/bin/bash
+
 # Color codes
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
@@ -57,7 +58,7 @@ if [ -f "$SUBDOMAIN_FILE" ]; then
                 crontab -l | grep -v '@reboot /usr/bin/php /var/www/html/laravel-app/artisan serve &' | crontab -
 
                 echo -e "${GREEN}Uninstallation complete!${NC}"
-                exit
+                exit 0
                 ;;
         esac
     done
