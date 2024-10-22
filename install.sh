@@ -10,10 +10,63 @@ echo -e "${CYAN}==============================${NC}"
 echo -e "${YELLOW}  Setting up or Updating your core and WebApp PowerPs${NC}"
 echo -e "${CYAN}==============================${NC}"
 
-# Prompt user for the subdomains
-read -p "Enter your Core subdomain (e.g., core.domain.com): " LARAVEL_SUBDOMAIN
-read -p "Enter your WebApp subdomain (e.g., web.domain.com): " HTML5_SUBDOMAIN
+# File to store subdomains
+SUBDOMAIN_FILE="subdomains.conf"
 
+# Check if the subdomains file exists
+if [ -f "$SUBDOMAIN_FILE" ]; then
+    source $SUBDOMAIN_FILE
+
+    # Ask user if they want to install or uninstall
+    echo -e "${YELLOW}Subdomains are already set. Do you want to install or uninstall?${NC}"
+    select choice in "Install" "Uninstall"; do
+        case $choice in
+            Install)
+                break
+                ;;
+            Uninstall)
+                echo -e "${GREEN}Uninstalling configurations...${NC}"
+
+                # Stop Laravel server
+                pkill -f artisan
+
+                # Remove Laravel application
+                sudo rm -rf /var/www/html/laravel-app
+
+                # Remove MySQL database and user
+                sudo mysql -e "DROP DATABASE ${DB_NAME};"
+                sudo mysql -e "DROP USER '${DB_USER}'@'localhost';"
+                sudo mysql -e "FLUSH PRIVILEGES;"
+
+                # Remove Apache virtual hosts
+                sudo rm /etc/apache2/sites-available/powerps-core.conf
+                sudo rm /etc/apache2/sites-available/powerps-webapp.conf
+                sudo a2dissite powerps-core
+                sudo a2dissite powerps-webapp
+
+                # Restart Apache
+                sudo systemctl restart apache2
+
+                # Remove PHPMyAdmin
+                sudo rm -rf /var/www/html/phpmyadmin
+
+                # Remove cron jobs
+                crontab -l | grep -v 'cd /var/www/html/laravel-app && php artisan schedule:run' | crontab -
+                crontab -l | grep -v '@reboot systemctl restart apache2' | crontab -
+                crontab -l | grep -v '@reboot systemctl restart mysql' | crontab -
+                crontab -l | grep -v '@reboot /usr/bin/php /var/www/html/laravel-app/artisan serve &' | crontab -
+
+                echo -e "${GREEN}Uninstallation complete!${NC}"
+                exit
+                ;;
+        esac
+    done
+else
+    read -p "Enter your Core subdomain (e.g., core.domain.com): " LARAVEL_SUBDOMAIN
+    read -p "Enter your WebApp subdomain (e.g., web.domain.com): " HTML5_SUBDOMAIN
+    echo "LARAVEL_SUBDOMAIN=$LARAVEL_SUBDOMAIN" > $SUBDOMAIN_FILE
+    echo "HTML5_SUBDOMAIN=$HTML5_SUBDOMAIN" >> $SUBDOMAIN_FILE
+fi
 # Update package lists and install necessary packages
 echo -e "${GREEN}Updating package lists and installing necessary packages...${NC}"
 sudo apt-get update
@@ -47,7 +100,6 @@ echo "$SECURE_MYSQL"
 # Create MySQL database and user
 DB_NAME='powerps_db'
 DB_USER='powerps_user'
-// create a random password for the user
 DB_PASS=$(openssl rand -base64 12)
 
 echo -e "${GREEN}Creating MySQL database and user...${NC}"
@@ -89,13 +141,6 @@ sudo chown -R www-data:www-data /var/www/html/laravel-app/storage
 sudo chown -R www-data:www-data /var/www/html/laravel-app/bootstrap/cache
 sudo chmod -R 775 /var/www/html/laravel-app/storage
 sudo chmod -R 775 /var/www/html/laravel-app/bootstrap/cache
-
-
-mkdir -p /var/www/html/laravel-app/public/images/transaction_images
-sudo chmod -R 775 /var/www/html/laravel-app/public/images/transaction_images
-sudo chown -R www-data:www-data /var/www/html/laravel-app/public/images/transaction_images
-mkdir -p /var/www/html/laravel-app/public/images
-sudo chmod -R 777 /var/www/html/laravel-app/public/images/
 
 
 # Set up environment variables if not already set
@@ -202,7 +247,6 @@ else
     cd /var/www/html/powerps-webapp
 fi
 
-// check if .env file exists in HTML5 project directory, remove ir and create a new one
 if [ -f "/var/www/html/powerps-webapp/assets/.env" ]; then
     rm /var/www/html/powerps-webapp/assets/.env
 fi
