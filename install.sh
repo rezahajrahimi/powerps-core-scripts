@@ -33,7 +33,6 @@ echo -e "${YELLOW}  Setting up or Updating your core and WebApp PowerPs${NC}"
 echo -e "${CYAN}==============================${NC}"
 
 echo -e "${GREEN}Starting installation...${NC}"
-progress_bar 5
 
 # File to store subdomains
 SUBDOMAIN_FILE="subdomains.conf"
@@ -51,6 +50,7 @@ if [ -f "$SUBDOMAIN_FILE" ]; then
                 ;;
             Uninstall)
                 echo -e "${GREEN}Uninstalling configurations...${NC}"
+                progress_bar 5
 
                 # Stop Laravel server
                 pkill -f artisan
@@ -92,6 +92,7 @@ else
     echo "LARAVEL_SUBDOMAIN=$LARAVEL_SUBDOMAIN" > $SUBDOMAIN_FILE
     echo "HTML5_SUBDOMAIN=$HTML5_SUBDOMAIN" >> $SUBDOMAIN_FILE
 fi
+
 # Update package lists and install necessary packages
 echo -e "${GREEN}Updating package lists and installing necessary packages...${NC}"
 progress_bar 10
@@ -176,6 +177,7 @@ composer install
 
 # Set permissions for Laravel storage and bootstrap/cache directories
 echo -e "${GREEN}Setting permissions...${NC}"
+progress_bar 3
 sudo chown -R www-data:www-data /var/www/html/laravel-app/storage
 sudo chown -R www-data:www-data /var/www/html/laravel-app/bootstrap/cache
 sudo chmod -R 775 /var/www/html/laravel-app/storage
