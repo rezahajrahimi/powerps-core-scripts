@@ -240,20 +240,30 @@ if [ -d "/var/www/html/powerps-webapp" ]; then
     # If it exists, update the repository
     echo -e "${GREEN}Updating the HTML5 project repository...${NC}"
     cd /var/www/html/powerps-webapp
+    
+    # Backup current .env content if exists
+    if [ -f "assets/.env" ]; then
+        ENV_BACKUP=$(cat assets/.env)
+        rm assets/.env
+    fi
+    
+    # Stash any changes, pull, and pop stash
+    git stash
     git pull origin main
+    git stash pop || true
+    
+    # Restore or create new .env file
+    echo "BASE_URL=https://${LARAVEL_SUBDOMAIN}" > assets/.env
+    if [ ! -z "$ENV_BACKUP" ]; then
+        echo "$ENV_BACKUP" >> assets/.env
+    fi
 else
     # Clone the HTML5 project repository
     echo -e "${GREEN}Cloning HTML5 project repository...${NC}"
     git clone https://github.com/rezahajrahimi/powerps-webapp /var/www/html/powerps-webapp
     cd /var/www/html/powerps-webapp
+    echo "BASE_URL=https://${LARAVEL_SUBDOMAIN}" > assets/.env
 fi
-
-if [ -f "/var/www/html/powerps-webapp/assets/.env" ]; then
-    rm /var/www/html/powerps-webapp/assets/.env
-fi
-
-# Set Laravel url in HTML5 project .env file
-echo "BASE_URL=https://${LARAVEL_SUBDOMAIN}" >> /var/www/html/powerps-webapp/assets/.env
 
 # Set up Apache virtual host for HTML5 project
 echo -e "${GREEN}Setting up Apache virtual host for HTML5 project...${NC}"
