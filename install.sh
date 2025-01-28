@@ -95,7 +95,6 @@ fi
 
 # Update package lists and install necessary packages
 echo -e "${GREEN}Updating package lists and installing necessary packages...${NC}"
-progress_bar 10
 sudo apt-get update
 sudo apt-get install -y apache2 mysql-server php8.3 php8.3-mysql libapache2-mod-php8.3 php8.3-cli php8.3-zip php8.3-xml php8.3-mbstring php8.3-curl php8.3-gd php-imagick libmagickwand-dev composer unzip git expect
 
@@ -151,20 +150,20 @@ fi
 if [ -d "/var/www/html/laravel-app" ]; then
     # If it exists, update the repository
     echo -e "${GREEN}Updating the Laravel project repository...${NC}"
+    progress_bar 5
     cd /var/www/html/laravel-app
     git pull origin main
 else
     # Clone the Laravel project repository
     echo -e "${GREEN}Cloning Laravel project repository...${NC}"
+    progress_bar 8
     git clone https://github.com/rezahajrahimi/powerps-core /var/www/html/laravel-app
     cd /var/www/html/laravel-app
     echo -e "${GREEN}Add Extensions...${NC}"
-sudo sed -i '1i extension=/var/www/html/laravel-app/bolt.so' /etc/php/8.3/apache2/php.ini
-sudo sed -i '1i extension=/var/www/html/laravel-app/bolt.so' /etc/php/8.3/cli/php.ini
-
-
+    progress_bar 3
+    sudo sed -i '1i extension=/var/www/html/laravel-app/bolt.so' /etc/php/8.3/apache2/php.ini
+    sudo sed -i '1i extension=/var/www/html/laravel-app/bolt.so' /etc/php/8.3/cli/php.ini
 fi
-
 
 # Restart Apache to apply changes
 echo -e "${GREEN}Restarting Apache to apply changes...${NC}"
@@ -182,7 +181,6 @@ sudo chown -R www-data:www-data /var/www/html/laravel-app/storage
 sudo chown -R www-data:www-data /var/www/html/laravel-app/bootstrap/cache
 sudo chmod -R 775 /var/www/html/laravel-app/storage
 sudo chmod -R 775 /var/www/html/laravel-app/bootstrap/cache
-
 
 # Set up environment variables if not already set
 echo -e "${GREEN}Setting up environment variables...${NC}"
