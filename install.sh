@@ -6,33 +6,10 @@ CYAN='\033[0;36m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Progress bar function
-progress_bar() {
-    local duration=$1
-    local step=$((duration/20))
-    local progress=0
-    local full_bar="####################"
-    local empty_bar="...................."
-    
-    echo -ne "\n"
-    while [ $progress -le $duration ]
-    do
-        local current=$(($progress * 20 / $duration))
-        local left=$((20 - $current))
-        local bar=$(echo "${full_bar:0:$current}${empty_bar:0:$left}")
-        echo -ne "\r[${bar}] $(($progress * 100 / $duration))%"
-        progress=$(($progress + $step))
-        sleep 1
-    done
-    echo -ne "\n"
-}
-
 # Pretty title
 echo -e "${CYAN}==============================${NC}"
 echo -e "${YELLOW}  Setting up or Updating your core and WebApp PowerPs${NC}"
 echo -e "${CYAN}==============================${NC}"
-
-echo -e "${GREEN}Starting installation...${NC}"
 
 # File to store subdomains
 SUBDOMAIN_FILE="subdomains.conf"
@@ -50,7 +27,6 @@ if [ -f "$SUBDOMAIN_FILE" ]; then
                 ;;
             Uninstall)
                 echo -e "${GREEN}Uninstalling configurations...${NC}"
-                progress_bar 5
 
                 # Stop Laravel server
                 pkill -f artisan
@@ -92,78 +68,65 @@ else
     echo "LARAVEL_SUBDOMAIN=$LARAVEL_SUBDOMAIN" > $SUBDOMAIN_FILE
     echo "HTML5_SUBDOMAIN=$HTML5_SUBDOMAIN" >> $SUBDOMAIN_FILE
 fi
-
 # Update package lists and install necessary packages
 echo -e "${GREEN}Updating package lists and installing necessary packages...${NC}"
 sudo apt-get update
 sudo apt-get install -y apache2 mysql-server php8.3 php8.3-mysql libapache2-mod-php8.3 php8.3-cli php8.3-zip php8.3-xml php8.3-mbstring php8.3-curl php8.3-gd php-imagick libmagickwand-dev composer unzip git expect
 
-# Check if MySQL is already configured
-MYSQL_CHECK=$(mysql --version 2>/dev/null)
-if [ $? -eq 0 ]; then
-    echo -e "${GREEN}MySQL is already installed and configured. Skipping MySQL setup...${NC}"
-else
-    # Secure MySQL Installation using expect
-    echo -e "${GREEN}Securing MySQL Installation...${NC}"
-    SECURE_MYSQL=$(expect -c "
-    set timeout 10
-    spawn sudo mysql_secure_installation
-    expect \"VALIDATE PASSWORD COMPONENT can be used to test passwords\"
-    send \"n\r\"
-    expect \"New password:\"
-    send \"yourpassword\r\"
-    expect \"Re-enter new password:\"
-    send \"yourpassword\r\"
-    expect \"Do you wish to continue with the password provided?\"
-    send \"y\r\"
-    expect \"Remove anonymous users?\"
-    send \"y\r\"
-    expect \"Disallow root login remotely?\"
-    send \"y\r\"
-    expect \"Remove test database and access to it?\"
-    send \"y\r\"
-    expect \"Reload privilege tables now?\"
-    send \"y\r\"
-    expect eof
-    ")
-    echo "$SECURE_MYSQL"
-fi
+# Secure MySQL Installation using expect
+echo -e "${GREEN}Securing MySQL Installation...${NC}"
+SECURE_MYSQL=$(expect -c "
+set timeout 10
+spawn sudo mysql_secure_installation
+expect \"VALIDATE PASSWORD COMPONENT can be used to test passwords\"
+send \"n\r\"
+expect \"New password:\"
+send \"yourpassword\r\"
+expect \"Re-enter new password:\"
+send \"yourpassword\r\"
+expect \"Do you wish to continue with the password provided?\"
+send \"y\r\"
+expect \"Remove anonymous users?\"
+send \"y\r\"
+expect \"Disallow root login remotely?\"
+send \"y\r\"
+expect \"Remove test database and access to it?\"
+send \"y\r\"
+expect \"Reload privilege tables now?\"
+send \"y\r\"
+expect eof
+")
+echo "$SECURE_MYSQL"
 
 # Create MySQL database and user
 DB_NAME='powerps_db'
 DB_USER='powerps_user'
 DB_PASS=$(openssl rand -base64 12)
 
-# Check if database already exists
-DB_EXISTS=$(sudo mysql -e "SHOW DATABASES LIKE '${DB_NAME}';" | grep "${DB_NAME}")
-if [ ! -z "$DB_EXISTS" ]; then
-    echo -e "${GREEN}Database ${DB_NAME} already exists. Skipping database creation...${NC}"
-else
-    echo -e "${GREEN}Creating MySQL database and user...${NC}"
-    sudo mysql -e "CREATE DATABASE ${DB_NAME};"
-    sudo mysql -e "CREATE USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';"
-    sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';"
-    sudo mysql -e "FLUSH PRIVILEGES;"
-fi
+echo -e "${GREEN}Creating MySQL database and user...${NC}"
+sudo mysql -e "CREATE DATABASE ${DB_NAME};"
+sudo mysql -e "CREATE USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';"
+sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';"
+sudo mysql -e "FLUSH PRIVILEGES;"
 
 # Check if the Laravel project directory exists
 if [ -d "/var/www/html/laravel-app" ]; then
     # If it exists, update the repository
     echo -e "${GREEN}Updating the Laravel project repository...${NC}"
-    progress_bar 5
     cd /var/www/html/laravel-app
     git pull origin main
 else
     # Clone the Laravel project repository
     echo -e "${GREEN}Cloning Laravel project repository...${NC}"
-    progress_bar 8
     git clone https://github.com/rezahajrahimi/powerps-core /var/www/html/laravel-app
     cd /var/www/html/laravel-app
     echo -e "${GREEN}Add Extensions...${NC}"
-    progress_bar 3
-    sudo sed -i '1i extension=/var/www/html/laravel-app/bolt.so' /etc/php/8.3/apache2/php.ini
-    sudo sed -i '1i extension=/var/www/html/laravel-app/bolt.so' /etc/php/8.3/cli/php.ini
+sudo sed -i '1i extension=/var/www/html/laravel-app/bolt.so' /etc/php/8.3/apache2/php.ini
+sudo sed -i '1i extension=/var/www/html/laravel-app/bolt.so' /etc/php/8.3/cli/php.ini
+
+
 fi
+
 
 # Restart Apache to apply changes
 echo -e "${GREEN}Restarting Apache to apply changes...${NC}"
@@ -171,16 +134,15 @@ sudo systemctl restart apache2
 
 # Install Composer dependencies
 echo -e "${GREEN}Installing Composer dependencies...${NC}"
-progress_bar 8
 composer install
 
 # Set permissions for Laravel storage and bootstrap/cache directories
 echo -e "${GREEN}Setting permissions...${NC}"
-progress_bar 3
 sudo chown -R www-data:www-data /var/www/html/laravel-app/storage
 sudo chown -R www-data:www-data /var/www/html/laravel-app/bootstrap/cache
 sudo chmod -R 775 /var/www/html/laravel-app/storage
 sudo chmod -R 775 /var/www/html/laravel-app/bootstrap/cache
+
 
 # Set up environment variables if not already set
 echo -e "${GREEN}Setting up environment variables...${NC}"
@@ -243,7 +205,6 @@ php artisan key:generate
 
 # Run migrations
 echo -e "${GREEN}Running migrations...${NC}"
-progress_bar 5
 php artisan migrate
 # Run Link Storage
 php artisan storage:link
@@ -348,6 +309,5 @@ php artisan serve &
 # Completion message
 echo -e "${CYAN}==============================${NC}"
 echo -e "${YELLOW}  Setup Complete!${NC}"
-progress_bar 3
 echo -e "${CYAN}==============================${NC}"
 echo -e "${GREEN}PowerPs installation complete!${NC}"
