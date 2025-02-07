@@ -63,15 +63,45 @@ if [ -f "$SUBDOMAIN_FILE" ]; then
         esac
     done
 else
-    read -p "Enter your Core subdomain (e.g., core.domain.com): " LARAVEL_SUBDOMAIN
-    read -p "Enter your WebApp subdomain (e.g., web.domain.com): " HTML5_SUBDOMAIN
+    # Enable line editing
+    if [ -t 0 ]; then
+        stty -echo
+        stty icanon
+    fi
+
+    while true; do
+        read -e -p "Enter your Core subdomain (e.g., core.domain.com): " LARAVEL_SUBDOMAIN
+        if [[ $LARAVEL_SUBDOMAIN =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$ ]]; then
+            break
+        else
+            echo -e "${YELLOW}Invalid domain format. Please try again.${NC}"
+        fi
+    done
+
+    while true; do
+        read -e -p "Enter your WebApp subdomain (e.g., web.domain.com): " HTML5_SUBDOMAIN
+        if [[ $HTML5_SUBDOMAIN =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$ ]]; then
+            break
+        else
+            echo -e "${YELLOW}Invalid domain format. Please try again.${NC}"
+        fi
+    done
+
+    # Reset terminal settings
+    if [ -t 0 ]; then
+        stty echo
+    fi
+
     echo "LARAVEL_SUBDOMAIN=$LARAVEL_SUBDOMAIN" > $SUBDOMAIN_FILE
     echo "HTML5_SUBDOMAIN=$HTML5_SUBDOMAIN" >> $SUBDOMAIN_FILE
 fi
 # Update package lists and install necessary packages
 echo -e "${GREEN}Updating package lists and installing necessary packages...${NC}"
 sudo apt-get update
-sudo apt-get install -y apache2 mysql-server php8.3 php8.3-mysql libapache2-mod-php8.3 php8.3-cli php8.3-zip php8.3-xml php8.3-mbstring php8.3-curl php8.3-gd php-imagick libmagickwand-dev composer unzip git expect
+sudo apt-get install -y apache2 mysql-server php8.3 php8.3-mysql libapache2-mod-php8.3 php8.3-cli php8.3-zip php8.3-xml php8.3-mbstring php8.3-curl php8.3-gd php-imagick libmagickwand-dev composer unzip git expect || {
+    echo -e "${RED}خطا در نصب پکیج‌ها${NC}"
+    exit 1
+}
 
 # Secure MySQL Installation using expect
 echo -e "${GREEN}Securing MySQL Installation...${NC}"
@@ -118,15 +148,19 @@ if [ -d "/var/www/html/laravel-app" ]; then
 else
     # Clone the Laravel project repository
     echo -e "${GREEN}Cloning Laravel project repository...${NC}"
-    git clone https://github.com/rezahajrahimi/powerps-core /var/www/html/laravel-app
+    git clone https://github.com/rezahajrahimi/powerps-core /var/www/html/laravel-app || {
+        echo -e "${RED}خطا در کلون کردن مخزن${NC}"
+        exit 1
+    }
     cd /var/www/html/laravel-app
-    echo -e "${GREEN}Add Extensions...${NC}"
-sudo sed -i '1i extension=/var/www/html/laravel-app/bolt.so' /etc/php/8.3/apache2/php.ini
-sudo sed -i '1i extension=/var/www/html/laravel-app/bolt.so' /etc/php/8.3/cli/php.ini
-
-
 fi
 
+# تنظیم مجوزها در هر دو حالت نصب اولیه و نصب مجدد
+echo -e "${GREEN}Setting permissions for Laravel directories...${NC}"
+sudo chown -R www-data:www-data /var/www/html/laravel-app/storage
+sudo chown -R www-data:www-data /var/www/html/laravel-app/bootstrap/cache
+sudo chmod -R 775 /var/www/html/laravel-app/storage
+sudo chmod -R 775 /var/www/html/laravel-app/bootstrap/cache
 
 # Restart Apache to apply changes
 echo -e "${GREEN}Restarting Apache to apply changes...${NC}"
@@ -135,13 +169,6 @@ sudo systemctl restart apache2
 # Install Composer dependencies
 echo -e "${GREEN}Installing Composer dependencies...${NC}"
 composer install
-
-# Set permissions for Laravel storage and bootstrap/cache directories
-echo -e "${GREEN}Setting permissions...${NC}"
-sudo chown -R www-data:www-data /var/www/html/laravel-app/storage
-sudo chown -R www-data:www-data /var/www/html/laravel-app/bootstrap/cache
-sudo chmod -R 775 /var/www/html/laravel-app/storage
-sudo chmod -R 775 /var/www/html/laravel-app/bootstrap/cache
 
 
 # Set up environment variables if not already set
@@ -177,28 +204,78 @@ if [ ! -f "/var/www/html/laravel-app/.env" ]; then
     echo "DB_USERNAME=${DB_USER}" >> /var/www/html/laravel-app/.env
     echo "DB_PASSWORD=${DB_PASS}" >> /var/www/html/laravel-app/.env
     # read & set telegram token
-    read -p "Enter your Bot token (e.g., botxxxxxxxxxxxxxxx): " TELEGRAM_BOT_TOKEN
+    # Enable line editing
+    if [ -t 0 ]; then
+        stty -echo
+        stty icanon
+    fi
+
+    # Telegram Bot Token validation
+    while true; do
+        read -e -p "Enter your Bot token (e.g., botxxxxxxxxxxxxxxx): " TELEGRAM_BOT_TOKEN
+        if [[ $TELEGRAM_BOT_TOKEN =~ ^bot[0-9]{8,}:[A-Za-z0-9_-]{35,}$ ]]; then
+            break
+        else
+            echo -e "${YELLOW}Invalid bot token format. It should start with 'bot' followed by numbers and characters.${NC}"
+        fi
+    done
     sed -i '/TELEGRAM_BOT_TOKEN/d' /var/www/html/laravel-app/.env
     echo "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}" >> /var/www/html/laravel-app/.env
 
-    read -p "Enter your Bot admin ID (e.g., 123456789): " TELEGRAM_ADMIN_ID
+    # Telegram Admin ID validation
+    while true; do
+        read -e -p "Enter your Bot admin ID (e.g., 123456789): " TELEGRAM_ADMIN_ID
+        if [[ $TELEGRAM_ADMIN_ID =~ ^[0-9]{6,}$ ]]; then
+            break
+        else
+            echo -e "${YELLOW}Invalid admin ID format. It should be a number with at least 6 digits.${NC}"
+        fi
+    done
     sed -i '/TELEGRAM_ADMIN_ID/d' /var/www/html/laravel-app/.env
     echo "TELEGRAM_ADMIN_ID=${TELEGRAM_ADMIN_ID}" >> /var/www/html/laravel-app/.env
 
+    # Set Telegram API endpoint
     sed -i '/TELEGRAM_API_ENDPOINT/d' /var/www/html/laravel-app/.env
     echo "TELEGRAM_API_ENDPOINT=https://api.telegram.org" >> /var/www/html/laravel-app/.env
 
-    # read & set ZARINPAL MERCHANT ID and NOWPAYMENTS API KEY tokens
-    read -p "Enter your Zarinpal Merchant ID (e.g., xxxxxxxx-sssssss-xxxxxxxx): " ZARINPAL_MERCHANT_ID
-    sed -i '/ZARINPAL_MERCHANT_ID/d' /var/www/html/laravel-app/.env
-    echo "ZARINPAL_MERCHANT_ID=${ZARINPAL_MERCHANT_ID}" >> /var/www/html/laravel-app/.env
+    # Optional Zarinpal Merchant ID
+    read -e -p "Enter your Zarinpal Merchant ID (optional, press Enter to skip): " ZARINPAL_MERCHANT_ID
+    if [ ! -z "$ZARINPAL_MERCHANT_ID" ]; then
+        if [[ $ZARINPAL_MERCHANT_ID =~ ^[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$ ]]; then
+            sed -i '/ZARINPAL_MERCHANT_ID/d' /var/www/html/laravel-app/.env
+            echo "ZARINPAL_MERCHANT_ID=${ZARINPAL_MERCHANT_ID}" >> /var/www/html/laravel-app/.env
+        else
+            echo -e "${YELLOW}Invalid Zarinpal Merchant ID format. Setting empty value.${NC}"
+            sed -i '/ZARINPAL_MERCHANT_ID/d' /var/www/html/laravel-app/.env
+            echo "ZARINPAL_MERCHANT_ID=" >> /var/www/html/laravel-app/.env
+        fi
+    else
+        sed -i '/ZARINPAL_MERCHANT_ID/d' /var/www/html/laravel-app/.env
+        echo "ZARINPAL_MERCHANT_ID=" >> /var/www/html/laravel-app/.env
+    fi
 
-    read -p "Enter your NOWPAYMENTS API KEY (e.g., xxxxxxxx-sssssss-xxxxxxxx): " NOWPAYMENTS_API_KEY
-    sed -i '/NOWPAYMENTS_API_KEY/d' /var/www/html/laravel-app/.env
-    echo "NOWPAYMENTS_API_KEY=${NOWPAYMENTS_API_KEY}" >> /var/www/html/laravel-app/.env
+    # Optional NOWPayments API Key
+    read -e -p "Enter your NOWPAYMENTS API KEY (optional, press Enter to skip): " NOWPAYMENTS_API_KEY
+    if [ ! -z "$NOWPAYMENTS_API_KEY" ]; then
+        if [[ $NOWPAYMENTS_API_KEY =~ ^[A-Za-z0-9-]{36}$ ]]; then
+            sed -i '/NOWPAYMENTS_API_KEY/d' /var/www/html/laravel-app/.env
+            echo "NOWPAYMENTS_API_KEY=${NOWPAYMENTS_API_KEY}" >> /var/www/html/laravel-app/.env
+        else
+            echo -e "${YELLOW}Invalid NOWPayments API key format. Setting empty value.${NC}"
+            sed -i '/NOWPAYMENTS_API_KEY/d' /var/www/html/laravel-app/.env
+            echo "NOWPAYMENTS_API_KEY=" >> /var/www/html/laravel-app/.env
+        fi
+    else
+        sed -i '/NOWPAYMENTS_API_KEY/d' /var/www/html/laravel-app/.env
+        echo "NOWPAYMENTS_API_KEY=" >> /var/www/html/laravel-app/.env
+    fi
+
+    # Reset terminal settings
+    if [ -t 0 ]; then
+        stty echo
+    fi
 
 fi
-
 # Generate app key
 echo -e "${GREEN}Generating app key...${NC}"
 php artisan key:generate
@@ -237,33 +314,22 @@ EOT"
 
 # Check if the HTML5 project directory exists
 if [ -d "/var/www/html/powerps-webapp" ]; then
-    # If it exists, update the repository
-    echo -e "${GREEN}Updating the HTML5 project repository...${NC}"
-    cd /var/www/html/powerps-webapp
-    
-    # Backup current .env content if exists
-    if [ -f "assets/.env" ]; then
-        ENV_BACKUP=$(cat assets/.env)
-        rm assets/.env
-    fi
-    
-    # Stash any changes, pull, and pop stash
-    git stash
-    git pull origin main
-    git stash pop || true
-    
-    # Restore or create new .env file
-    echo "BASE_URL=https://${LARAVEL_SUBDOMAIN}" > assets/.env
-    if [ ! -z "$ENV_BACKUP" ]; then
-        echo "$ENV_BACKUP" >> assets/.env
-    fi
-else
-    # Clone the HTML5 project repository
-    echo -e "${GREEN}Cloning HTML5 project repository...${NC}"
-    git clone https://github.com/rezahajrahimi/powerps-webapp /var/www/html/powerps-webapp
-    cd /var/www/html/powerps-webapp
-    echo "BASE_URL=https://${LARAVEL_SUBDOMAIN}" > assets/.env
+    echo -e "${GREEN}Removing existing HTML5 project directory...${NC}"
+    sudo rm -rf /var/www/html/powerps-webapp
 fi
+
+# Clone the HTML5 project repository
+echo -e "${GREEN}Cloning HTML5 project repository...${NC}"
+git clone https://github.com/rezahajrahimi/powerps-webapp /var/www/html/powerps-webapp || {
+    echo -e "${RED}خطا در کلون کردن مخزن${NC}"
+    exit 1
+}
+
+# Change to project directory
+cd /var/www/html/powerps-webapp
+
+# Create new .env file with BASE_URL
+echo "BASE_URL=https://${LARAVEL_SUBDOMAIN}" > assets/.env
 
 # Set up Apache virtual host for HTML5 project
 echo -e "${GREEN}Setting up Apache virtual host for HTML5 project...${NC}"
@@ -304,10 +370,27 @@ echo -e "${GREEN}Ensuring services start on reboot...${NC}"
 # Start Laravel server
 echo -e "${GREEN}Starting powerps core...${NC}"
 cd /var/www/html/laravel-app
-php artisan serve &
-
+php artisan serve & php artisan queue:work
 # Completion message
 echo -e "${CYAN}==============================${NC}"
 echo -e "${YELLOW}  Setup Complete!${NC}"
 echo -e "${CYAN}==============================${NC}"
+
+# Set Telegram Webhook
+echo -e "${GREEN}Setting up Telegram webhook...${NC}"
+WEBHOOK_URL="https://${LARAVEL_SUBDOMAIN}/api/telegram/webhooks/inbound"
+TELEGRAM_API="https://api.telegram.org/${TELEGRAM_BOT_TOKEN}/setWebhook?url=${WEBHOOK_URL}"
+
+# Send request to set webhook
+WEBHOOK_RESPONSE=$(curl -s "$TELEGRAM_API")
+
+# Check if webhook was set successfully
+if [[ $WEBHOOK_RESPONSE == *"\"ok\":true"* ]]; then
+    echo -e "${GREEN}Telegram webhook set successfully!${NC}"
+    echo -e "${GREEN}Webhook URL: ${WEBHOOK_URL}${NC}"
+else
+    echo -e "${YELLOW}Warning: Failed to set Telegram webhook. Please set it manually:${NC}"
+    echo -e "${YELLOW}${TELEGRAM_API}${NC}"
+fi
+
 echo -e "${GREEN}PowerPs installation complete!${NC}"
