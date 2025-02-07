@@ -441,7 +441,7 @@ echo -e "${GREEN}Ensuring services start on reboot...${NC}"
 # Start Laravel server
 echo -e "${GREEN}Starting powerps core...${NC}"
 cd /var/www/html/laravel-app
-php artisan serve & php artisan queue:work
+php artisan serve & 
 # Completion message
 echo -e "${CYAN}==============================${NC}"
 echo -e "${YELLOW}  Setup Complete!${NC}"
