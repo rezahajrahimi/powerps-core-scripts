@@ -126,6 +126,15 @@ if [ -f "$SUBDOMAIN_FILE" ]; then
                     check_command "Failed to remove hosts entries"
                 fi
 
+                # Stop Laravel Queue Service
+                if systemctl is-active --quiet laravel-queue; then
+                    echo -e "${GREEN}Stopping Laravel Queue Service...${NC}"
+                    sudo systemctl stop laravel-queue
+                    sudo systemctl disable laravel-queue
+                    sudo rm -f /etc/systemd/system/laravel-queue.service
+                    sudo systemctl daemon-reload
+                fi
+
                 echo -e "${GREEN}Uninstallation completed successfully!${NC}"
                 echo -e "${YELLOW}Note: Some system packages (Apache, MySQL, PHP) were left installed.${NC}"
                 echo -e "${YELLOW}If you want to remove them, please use: sudo apt remove apache2 mysql-server php8.3${NC}"
@@ -438,10 +447,6 @@ echo -e "${GREEN}Ensuring services start on reboot...${NC}"
 (crontab -l ; echo "@reboot systemctl restart mysql") | crontab -
 (crontab -l ; echo "@reboot /usr/bin/php /var/www/html/laravel-app/artisan serve &") | crontab -
 
-# Start Laravel server
-echo -e "${GREEN}Starting powerps core...${NC}"
-cd /var/www/html/laravel-app
-php artisan serve & 
 # Completion message
 echo -e "${CYAN}==============================${NC}"
 echo -e "${YELLOW}  Setup Complete!${NC}"
@@ -496,3 +501,30 @@ check_requirements() {
         echo -e "${YELLOW}Warning: Less than 1GB RAM available${NC}"
     fi
 }
+
+# Create and configure Laravel Queue Service
+echo -e "${GREEN}Setting up Laravel Queue Service...${NC}"
+sudo bash -c "cat > /etc/systemd/system/laravel-queue.service << 'EOL'
+[Unit]
+Description=Laravel Queue Worker
+After=network.target mysql.service apache2.service
+
+[Service]
+User=www-data
+Group=www-data
+Restart=always
+ExecStart=/usr/bin/php /var/www/html/laravel-app/artisan queue:work
+StandardOutput=append:/var/log/laravel-queue.log
+StandardError=append:/var/log/laravel-queue.error.log
+
+[Install]
+WantedBy=multi-user.target
+EOL"
+
+# Reload systemd and start queue service
+sudo systemctl daemon-reload
+sudo systemctl enable laravel-queue
+sudo systemctl start laravel-queue
+
+# Remove old artisan serve from cron
+crontab -l | grep -v '/usr/bin/php /var/www/html/laravel-app/artisan serve' | crontab -
