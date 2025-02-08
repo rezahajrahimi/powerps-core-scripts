@@ -143,12 +143,6 @@ if [ -f "$SUBDOMAIN_FILE" ]; then
         esac
     done
 else
-    # Enable line editing
-    if [ -t 0 ]; then
-        stty -echo
-        stty icanon
-    fi
-
     while true; do
         read -e -p "Enter your Core subdomain (e.g., core.domain.com): " LARAVEL_SUBDOMAIN
         if [[ $LARAVEL_SUBDOMAIN =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$ ]]; then
@@ -166,11 +160,6 @@ else
             echo -e "${YELLOW}Invalid domain format. Please try again.${NC}"
         fi
     done
-
-    # Reset terminal settings
-    if [ -t 0 ]; then
-        stty echo
-    fi
 
     echo "LARAVEL_SUBDOMAIN=$LARAVEL_SUBDOMAIN" > $SUBDOMAIN_FILE
     echo "HTML5_SUBDOMAIN=$HTML5_SUBDOMAIN" >> $SUBDOMAIN_FILE
@@ -284,12 +273,6 @@ if [ ! -f "/var/www/html/laravel-app/.env" ]; then
     echo "DB_USERNAME=${DB_USER}" >> /var/www/html/laravel-app/.env
     echo "DB_PASSWORD=${DB_PASS}" >> /var/www/html/laravel-app/.env
     # read & set telegram token
-    # Enable line editing
-    if [ -t 0 ]; then
-        stty -echo
-        stty icanon
-    fi
-
     # Telegram Bot Token validation
     while true; do
         read -e -p "Enter your Bot token (e.g., botxxxxxxxxxxxxxxx): " TELEGRAM_BOT_TOKEN
@@ -348,11 +331,6 @@ if [ ! -f "/var/www/html/laravel-app/.env" ]; then
     else
         sed -i '/NOWPAYMENTS_API_KEY/d' /var/www/html/laravel-app/.env
         echo "NOWPAYMENTS_API_KEY=" >> /var/www/html/laravel-app/.env
-    fi
-
-    # Reset terminal settings
-    if [ -t 0 ]; then
-        stty echo
     fi
 
 fi
@@ -445,7 +423,6 @@ echo -e "${GREEN}Adding schedule to cron job...${NC}"
 echo -e "${GREEN}Ensuring services start on reboot...${NC}"
 (crontab -l ; echo "@reboot systemctl restart apache2") | crontab -
 (crontab -l ; echo "@reboot systemctl restart mysql") | crontab -
-(crontab -l ; echo "@reboot /usr/bin/php /var/www/html/laravel-app/artisan serve &") | crontab -
 
 # Completion message
 echo -e "${CYAN}==============================${NC}"
