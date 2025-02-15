@@ -172,6 +172,7 @@ sudo apt-get install -y apache2 mysql-server php8.3 php8.3-mysql libapache2-mod-
     exit 1
 }
 
+
 # Secure MySQL Installation using expect
 echo -e "${GREEN}Securing MySQL Installation...${NC}"
 SECURE_MYSQL=$(expect -c "
@@ -223,6 +224,11 @@ else
     }
     cd /var/www/html/laravel-app
 fi
+# Install Bolt extension
+echo -e "${GREEN}Installing Bolt extension...${NC}"
+sudo pecl install bolt
+sudo bash -c 'echo "extension=bolt.so" >> /etc/php/8.3/apache2/php.ini'
+sudo bash -c 'echo "extension=bolt.so" >> /etc/php/8.3/cli/php.ini'
 
 # تنظیم مجوزها در هر دو حالت نصب اولیه و نصب مجدد
 echo -e "${GREEN}Setting permissions for Laravel directories...${NC}"
