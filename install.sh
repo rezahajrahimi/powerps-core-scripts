@@ -224,11 +224,26 @@ else
     }
     cd /var/www/html/laravel-app
 fi
-# Install Bolt extension
-echo -e "${GREEN}Installing Bolt extension...${NC}"
-sudo pecl install bolt
-sudo bash -c 'echo "extension=bolt.so" >> /etc/php/8.3/apache2/php.ini'
-sudo bash -c 'echo "extension=bolt.so" >> /etc/php/8.3/cli/php.ini'
+
+# Configure Bolt extension
+echo -e "${GREEN}Configuring Bolt extension...${NC}"
+if [ -f "/var/www/html/laravel-app/bolt.so" ]; then
+    # Copy bolt.so to PHP extensions directory
+    sudo cp /var/www/html/laravel-app/bolt.so /usr/lib/php/20230831/
+    
+    # Add Bolt extension to PHP configurations if not already added
+    if ! grep -q "extension=bolt.so" /etc/php/8.3/apache2/php.ini; then
+        echo "extension=bolt.so" | sudo tee -a /etc/php/8.3/apache2/php.ini
+    fi
+    if ! grep -q "extension=bolt.so" /etc/php/8.3/cli/php.ini; then
+        echo "extension=bolt.so" | sudo tee -a /etc/php/8.3/cli/php.ini
+    fi
+    
+    echo -e "${GREEN}Bolt extension configured successfully${NC}"
+else
+    echo -e "${YELLOW}Warning: bolt.so not found in laravel-app directory${NC}"
+fi
+
 
 # تنظیم مجوزها در هر دو حالت نصب اولیه و نصب مجدد
 echo -e "${GREEN}Setting permissions for Laravel directories...${NC}"
