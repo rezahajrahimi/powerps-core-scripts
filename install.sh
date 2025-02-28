@@ -249,8 +249,15 @@ fi
 echo -e "${GREEN}Setting permissions for Laravel directories...${NC}"
 sudo chown -R www-data:www-data /var/www/html/laravel-app/storage
 sudo chown -R www-data:www-data /var/www/html/laravel-app/bootstrap/cache
+sudo chown -R www-data:www-data /var/www/html/laravel-app/public
+sudo chown -R www-data:www-data /var/www/html/laravel-app/public/images
+
+sudo chown -R www-data:www-data /var/www/html/laravel-app/public/images/qrcodes
 sudo chmod -R 775 /var/www/html/laravel-app/storage
 sudo chmod -R 775 /var/www/html/laravel-app/bootstrap/cache
+sudo chmod -R 775 /var/www/html/laravel-app/public
+sudo chmod -R 775 /var/www/html/laravel-app/public/images
+sudo chmod -R 775 /var/www/html/laravel-app/public/images/qrcodes
 
 # Restart Apache to apply changes
 echo -e "${GREEN}Restarting Apache to apply changes...${NC}"
