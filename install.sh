@@ -215,7 +215,7 @@ fi
 # Update package lists and install necessary packages
 echo -e "${GREEN}Updating package lists and installing necessary packages...${NC}"
 sudo apt-get update
-sudo apt-get install -y apache2 mysql-server php8.3 php8.3-mysql libapache2-mod-php8.3 php8.3-cli php8.3-zip php8.3-xml php8.3-mbstring php8.3-curl php8.3-gd php-imagick libmagickwand-dev composer unzip git expect || {
+sudo apt-get install -y apache2 mysql-server php8.3 php8.3-mysql libapache2-mod-php8.3 php8.3-cli php8.3-zip php8.3-xml php8.3-mbstring php8.3-curl php8.3-gd php-imagick libmagickwand-dev composer unzip git expect python3-certbot-apache certbot || {
     echo -e "${RED}خطا در نصب پکیج‌ها${NC}"
     exit 1
 }
@@ -509,6 +509,24 @@ sudo a2ensite powerps-webapp || check_command "Failed to enable powerps-webapp s
 sudo a2enmod rewrite || check_command "Failed to enable rewrite module"
 sudo systemctl restart apache2 || check_command "Failed to restart apache2"
 
+# Obtain TLS certificates for subdomains using Certbot (Let's Encrypt)
+echo -e "${GREEN}Obtaining TLS certificates for ${LARAVEL_SUBDOMAIN} and ${HTML5_SUBDOMAIN}...${NC}"
+# Use default email if user leaves empty
+read -e -p "Enter email for Let's Encrypt notifications (press Enter to use admin@${LARAVEL_SUBDOMAIN#*.}): " CERTBOT_EMAIL
+if [ -z "${CERTBOT_EMAIL}" ]; then
+    CERTBOT_EMAIL="admin@${LARAVEL_SUBDOMAIN#*.}"
+fi
+for domain in "${LARAVEL_SUBDOMAIN}" "${HTML5_SUBDOMAIN}"; do
+    if [ -d "/etc/letsencrypt/live/${domain}" ]; then
+        echo -e "${YELLOW}Certificate already exists for ${domain}, skipping...${NC}"
+        continue
+    fi
+    run_with_retry "sudo certbot --apache --non-interactive --agree-tos --email ${CERTBOT_EMAIL} -d ${domain} --redirect" 3 5 || {
+        echo -e "${YELLOW}Warning: Failed to obtain certificate for ${domain}. Please run: sudo certbot --apache -d ${domain} --email ${CERTBOT_EMAIL} --agree-tos --redirect${NC}"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: Failed to obtain certificate for ${domain}" | sudo tee -a /var/log/powerps_install.log >/dev/null
+    }
+done
+
 # Add domain entries to /etc/hosts
 echo "127.0.0.1 ${LARAVEL_SUBDOMAIN}" | sudo tee -a /etc/hosts
 echo "127.0.0.1 ${HTML5_SUBDOMAIN}" | sudo tee -a /etc/hosts
@@ -579,7 +597,7 @@ check_requirements() {
     fi
 }
 
-# Create and configure Laravel Queue Service
+# Create and configure Laravel Queue Service (systemd supervised)
 echo -e "${GREEN}Setting up Laravel Queue Service...${NC}"
 sudo bash -c "cat > /etc/systemd/system/laravel-queue.service << 'EOL'
 [Unit]
@@ -589,8 +607,12 @@ After=network.target mysql.service apache2.service
 [Service]
 User=www-data
 Group=www-data
+# Keep the worker running and limit restart storms
 Restart=always
-ExecStart=/usr/bin/php /var/www/html/laravel-app/artisan queue:work
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+ExecStart=/usr/bin/php /var/www/html/laravel-app/artisan queue:work --sleep=3 --tries=3 --timeout=0
 StandardOutput=append:/var/log/laravel-queue.log
 StandardError=append:/var/log/laravel-queue.error.log
 
@@ -604,9 +626,39 @@ sudo chown www-data:www-data /var/log/laravel-queue.log /var/log/laravel-queue.e
 sudo chmod 640 /var/log/laravel-queue.log /var/log/laravel-queue.error.log || true
 
 # Reload systemd and start queue service
-sudo systemctl daemon-reload
-sudo systemctl enable laravel-queue
-sudo systemctl start laravel-queue
+sudo systemctl daemon-reload || check_command "Failed to reload systemd"
+sudo systemctl enable --now laravel-queue || check_command "Failed to enable/start laravel-queue"
+
+# Create Certbot renewal systemd service and timer to renew SSL and reload Apache
+echo -e "${GREEN}Setting up Certbot renewal timer...${NC}"
+sudo bash -c "cat > /etc/systemd/system/certbot-renew.service << 'EOL'
+[Unit]
+Description=Run Certbot renewal and reload Apache if certificates changed
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/certbot renew --quiet --post-hook 'systemctl reload apache2'
+EOL"
+
+sudo bash -c "cat > /etc/systemd/system/certbot-renew.timer << 'EOL'
+[Unit]
+Description=Timer to run Certbot renewal daily
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=3600
+
+[Install]
+WantedBy=timers.target
+EOL"
+
+# Reload systemd and enable timer
+sudo systemctl daemon-reload || check_command "Failed to reload systemd after adding certbot units"
+sudo systemctl enable --now certbot-renew.timer || check_command "Failed to enable/start certbot-renew.timer"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: certbot-renew.timer enabled" | sudo tee -a /var/log/powerps_install.log >/dev/null
 
 # Remove old artisan serve from cron
 crontab -l | grep -v '/usr/bin/php /var/www/html/laravel-app/artisan serve' | crontab -
