@@ -4,7 +4,64 @@
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
 YELLOW='\033[1;33m'
+RED='\033[0;31m'
 NC='\033[0m' # No Color
+
+# Fail fast and safer shell options
+set -o errexit
+set -o nounset
+set -o pipefail
+
+# Error handler
+error_handler() {
+    local exit_code=$?
+    echo -e "${RED}Error: Script exited with code ${exit_code}${NC}"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: Script exited with code ${exit_code}" | sudo tee -a /var/log/powerps_install.log >/dev/null
+    exit ${exit_code}
+}
+trap error_handler ERR
+
+# Ensure log file exists and is writable
+sudo mkdir -p /var/log
+sudo touch /var/log/powerps_install.log
+sudo chown $(whoami):$(whoami) /var/log/powerps_install.log
+sudo chmod 640 /var/log/powerps_install.log
+
+# Helper: check command result and log
+check_command() {
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}$1${NC}"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1" | sudo tee -a /var/log/powerps_install.log >/dev/null
+        exit 1
+    fi
+}
+
+# Backup helper (defined globally so any path can call it)
+backup_existing() {
+    if [ -d "$1" ]; then
+        backup_dir="${1}_backup_$(date +%Y%m%d_%H%M%S)"
+        mv "$1" "$backup_dir"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Backed up $1 to $backup_dir" | sudo tee -a /var/log/powerps_install.log >/dev/null
+    fi
+}
+
+# run command with retries
+run_with_retry() {
+    local cmd="$1"
+    local retries=${2:-3}
+    local delay=${3:-5}
+    local attempt=1
+    until eval "$cmd"; do
+        if [ "$attempt" -ge "$retries" ]; then
+            echo -e "${RED}Command failed after ${attempt} attempts: $cmd${NC}"
+            return 1
+        fi
+        echo "Attempt ${attempt} failed; retrying in ${delay}s..."
+        attempt=$((attempt + 1))
+        sleep "$delay"
+    done
+    return 0
+}
 
 # Pretty title
 echo -e "${CYAN}==============================${NC}"
@@ -16,11 +73,12 @@ SUBDOMAIN_FILE="subdomains.conf"
 
 # Check if the subdomains file exists
 if [ -f "$SUBDOMAIN_FILE" ]; then
-    source $SUBDOMAIN_FILE
+    source "$SUBDOMAIN_FILE"
 
     # Ask user if they want to install or uninstall
     echo -e "${YELLOW}Subdomains are already set. Do you want to install or uninstall?${NC}"
     select choice in "Install" "Uninstall"; do
+
         case $choice in
             Install)
                 break
@@ -28,19 +86,7 @@ if [ -f "$SUBDOMAIN_FILE" ]; then
             Uninstall)
                 echo -e "${GREEN}Starting uninstallation process...${NC}"
                 
-                # Function to log errors
-                log_error() {
-                    echo -e "${RED}Error: $1${NC}"
-                }
 
-                # Function to check if a command succeeded
-                check_command() {
-                    if [ $? -ne 0 ]; then
-                        log_error "$1"
-                        return 1
-                    fi
-                    return 0
-                }
 
                 # 1. Stop running services
                 echo -e "${GREEN}Stopping services...${NC}"
@@ -53,14 +99,16 @@ if [ -f "$SUBDOMAIN_FILE" ]; then
                 # 2. Remove Laravel application
                 echo -e "${GREEN}Removing Laravel application...${NC}"
                 if [ -d "/var/www/html/laravel-app" ]; then
-                    sudo rm -rf /var/www/html/laravel-app
+                    backup_existing "/var/www/html/laravel-app"
+                    sudo rm -rf /var/www/html/laravel-app || true
                     check_command "Failed to remove Laravel application directory"
                 fi
 
                 # 3. Remove WebApp
                 echo -e "${GREEN}Removing WebApp...${NC}"
                 if [ -d "/var/www/html/powerps-webapp" ]; then
-                    sudo rm -rf /var/www/html/powerps-webapp
+                    backup_existing "/var/www/html/powerps-webapp"
+                    sudo rm -rf /var/www/html/powerps-webapp || true
                     check_command "Failed to remove WebApp directory"
                 fi
 
@@ -161,8 +209,8 @@ else
         fi
     done
 
-    echo "LARAVEL_SUBDOMAIN=$LARAVEL_SUBDOMAIN" > $SUBDOMAIN_FILE
-    echo "HTML5_SUBDOMAIN=$HTML5_SUBDOMAIN" >> $SUBDOMAIN_FILE
+    echo "LARAVEL_SUBDOMAIN=$LARAVEL_SUBDOMAIN" > "$SUBDOMAIN_FILE"
+    echo "HTML5_SUBDOMAIN=$HTML5_SUBDOMAIN" >> "$SUBDOMAIN_FILE"
 fi
 # Update package lists and install necessary packages
 echo -e "${GREEN}Updating package lists and installing necessary packages...${NC}"
@@ -175,15 +223,25 @@ sudo apt-get install -y apache2 mysql-server php8.3 php8.3-mysql libapache2-mod-
 
 # Secure MySQL Installation using expect
 echo -e "${GREEN}Securing MySQL Installation...${NC}"
+# Prompt for MySQL root password to use for mysql_secure_installation (or press Enter to auto-generate a strong one)
+read -s -e -p "Enter desired MySQL root password (leave empty to generate one): " MYSQL_ROOT_PASSWORD
+echo
+if [ -z "${MYSQL_ROOT_PASSWORD}" ]; then
+    MYSQL_ROOT_PASSWORD=$(openssl rand -base64 16)
+    echo "Generated MySQL root password: (will be saved to /root/.mysql_root_pass - permissions restricted)"
+    echo "${MYSQL_ROOT_PASSWORD}" | sudo tee /root/.mysql_root_pass >/dev/null
+    sudo chmod 600 /root/.mysql_root_pass
+fi
+# Use expect to automate mysql_secure_installation with provided password
 SECURE_MYSQL=$(expect -c "
 set timeout 10
 spawn sudo mysql_secure_installation
 expect \"VALIDATE PASSWORD COMPONENT can be used to test passwords\"
 send \"n\r\"
 expect \"New password:\"
-send \"yourpassword\r\"
+send \"${MYSQL_ROOT_PASSWORD}\r\"
 expect \"Re-enter new password:\"
-send \"yourpassword\r\"
+send \"${MYSQL_ROOT_PASSWORD}\r\"
 expect \"Do you wish to continue with the password provided?\"
 send \"y\r\"
 expect \"Remove anonymous users?\"
@@ -197,6 +255,7 @@ send \"y\r\"
 expect eof
 ")
 echo "$SECURE_MYSQL"
+# Do not log or print the MySQL root password anywhere else
 
 # Create MySQL database and user
 DB_NAME='powerps_db'
@@ -204,10 +263,10 @@ DB_USER='powerps_user'
 DB_PASS=$(openssl rand -base64 12)
 
 echo -e "${GREEN}Creating MySQL database and user...${NC}"
-sudo mysql -e "CREATE DATABASE ${DB_NAME};"
-sudo mysql -e "CREATE USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';"
-sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';"
-sudo mysql -e "FLUSH PRIVILEGES;"
+sudo mysql -e "CREATE DATABASE ${DB_NAME};" || check_command "Failed to create database ${DB_NAME}"
+sudo mysql -e "CREATE USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';" || check_command "Failed to create database user ${DB_USER}"
+sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';" || check_command "Failed to grant privileges on ${DB_NAME}"
+sudo mysql -e "FLUSH PRIVILEGES;" || check_command "Failed to flush privileges"
 
 # Check if the Laravel project directory exists
 if [ -d "/var/www/html/laravel-app" ]; then
@@ -218,8 +277,9 @@ if [ -d "/var/www/html/laravel-app" ]; then
 else
     # Clone the Laravel project repository
     echo -e "${GREEN}Cloning Laravel project repository...${NC}"
-    git clone https://github.com/rezahajrahimi/powerps-core /var/www/html/laravel-app || {
+    run_with_retry "git clone https://github.com/rezahajrahimi/powerps-core /var/www/html/laravel-app" 3 5 || {
         echo -e "${RED}خطا در کلون کردن مخزن${NC}"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: Failed to clone laravel repository" | sudo tee -a /var/log/powerps_install.log >/dev/null
         exit 1
     }
     cd /var/www/html/laravel-app
@@ -265,7 +325,10 @@ sudo systemctl restart apache2
 
 # Install Composer dependencies
 echo -e "${GREEN}Installing Composer dependencies...${NC}"
-composer install
+run_with_retry "composer install --no-interaction --no-progress --prefer-dist" 3 5 || {
+    echo -e "${RED}Composer install failed${NC}"
+    exit 1
+}
 
 
 # Set up environment variables if not already set
@@ -275,7 +338,7 @@ if [ ! -f "/var/www/html/laravel-app/.env" ]; then
     sed -i '/APP_NAME/d' /var/www/html/laravel-app/.env
     echo "APP_NAME=Laravel" >> /var/www/html/laravel-app/.env
 
-    // check if APP_ENV is already set remove it and add it again
+    # check if APP_ENV is already set remove it and add it again
     sed -i '/APP_ENV/d' /var/www/html/laravel-app/.env
     echo "APP_ENV=production" >> /var/www/html/laravel-app/.env
     sed -i '/APP_KEY/d' /var/www/html/laravel-app/.env
@@ -362,6 +425,9 @@ if [ ! -f "/var/www/html/laravel-app/.env" ]; then
     fi
 
 fi
+# Secure .env file: restrict permissions and owner
+sudo chown www-data:www-data /var/www/html/laravel-app/.env || true
+sudo chmod 600 /var/www/html/laravel-app/.env || true
 # Generate app key
 echo -e "${GREEN}Generating app key...${NC}"
 php artisan key:generate
@@ -378,9 +444,9 @@ else
     # Install PHPMyAdmin
     echo -e "${GREEN}Installing PHPMyAdmin...${NC}"
     cd /var/www/html
-    wget https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.zip
-    unzip phpMyAdmin-latest-all-languages.zip
-    mv phpMyAdmin-*-all-languages phpmyadmin
+    run_with_retry "wget -q https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.zip -O phpMyAdmin-latest-all-languages.zip" 3 5 || { echo -e "${RED}Failed to download phpMyAdmin${NC}"; exit 1; }
+    unzip phpMyAdmin-latest-all-languages.zip || { echo -e "${RED}Failed to unzip phpMyAdmin archive${NC}"; exit 1; }
+    mv phpMyAdmin-*-all-languages phpmyadmin || { echo -e "${RED}Failed to move phpMyAdmin directory${NC}"; exit 1; }
     rm phpMyAdmin-latest-all-languages.zip
 fi
 
@@ -401,13 +467,15 @@ EOT"
 # Check if the HTML5 project directory exists
 if [ -d "/var/www/html/powerps-webapp" ]; then
     echo -e "${GREEN}Removing existing HTML5 project directory...${NC}"
-    sudo rm -rf /var/www/html/powerps-webapp
+    backup_existing "/var/www/html/powerps-webapp"
+    sudo rm -rf /var/www/html/powerps-webapp || true
 fi
 
 # Clone the HTML5 project repository
 echo -e "${GREEN}Cloning HTML5 project repository...${NC}"
-git clone https://github.com/rezahajrahimi/powerps-webapp /var/www/html/powerps-webapp || {
+run_with_retry "git clone https://github.com/rezahajrahimi/powerps-webapp /var/www/html/powerps-webapp" 3 5 || {
     echo -e "${RED}خطا در کلون کردن مخزن${NC}"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: Failed to clone webapp repository" | sudo tee -a /var/log/powerps_install.log >/dev/null
     exit 1
 }
 
@@ -416,6 +484,8 @@ cd /var/www/html/powerps-webapp
 
 # Create new .env file with BASE_URL
 echo "BASE_URL=https://${LARAVEL_SUBDOMAIN}" > assets/.env
+sudo chown www-data:www-data assets/.env || true
+sudo chmod 640 assets/.env || true
 
 # Set up Apache virtual host for HTML5 project
 echo -e "${GREEN}Setting up Apache virtual host for HTML5 project...${NC}"
@@ -434,10 +504,10 @@ sudo bash -c "cat <<EOT > /etc/apache2/sites-available/powerps-webapp.conf
 EOT"
 
 # Enable Apache virtual hosts
-sudo a2ensite powerps-core
-sudo a2ensite powerps-webapp
-sudo a2enmod rewrite
-sudo systemctl restart apache2
+sudo a2ensite powerps-core || check_command "Failed to enable powerps-core site"
+sudo a2ensite powerps-webapp || check_command "Failed to enable powerps-webapp site"
+sudo a2enmod rewrite || check_command "Failed to enable rewrite module"
+sudo systemctl restart apache2 || check_command "Failed to restart apache2"
 
 # Add domain entries to /etc/hosts
 echo "127.0.0.1 ${LARAVEL_SUBDOMAIN}" | sudo tee -a /etc/hosts
@@ -470,8 +540,10 @@ if [[ $WEBHOOK_RESPONSE == *"\"ok\":true"* ]]; then
     echo -e "${GREEN}Telegram webhook set successfully!${NC}"
     echo -e "${GREEN}Webhook URL: ${WEBHOOK_URL}${NC}"
 else
-    echo -e "${YELLOW}Warning: Failed to set Telegram webhook. Please set it manually:${NC}"
-    echo -e "${YELLOW}${TELEGRAM_API}${NC}"
+    masked_token="${TELEGRAM_BOT_TOKEN:0:4}...${TELEGRAM_BOT_TOKEN: -4}"
+    echo -e "${YELLOW}Warning: Failed to set Telegram webhook. You can set it manually.${NC}"
+    echo -e "${YELLOW}Masked bot token: ${masked_token}${NC}"
+    echo -e "${YELLOW}Run: curl -F \"url=${WEBHOOK_URL}\" https://api.telegram.org/bot<your-bot-token>/setWebhook${NC}"
 fi
 
 echo -e "${GREEN}PowerPs installation complete!${NC}"
@@ -502,8 +574,8 @@ check_requirements() {
     
     # بررسی رم
     total_ram=$(free -m | awk '/^Mem:/{print $2}')
-    if [ "$total_ram" -lt 1024 ]; then
-        echo -e "${YELLOW}Warning: Less than 1GB RAM available${NC}"
+    if [ "$total_ram" -lt 256 ]; then
+        echo -e "${YELLOW}Warning: Less than 256MB RAM available${NC}"
     fi
 }
 
@@ -525,6 +597,11 @@ StandardError=append:/var/log/laravel-queue.error.log
 [Install]
 WantedBy=multi-user.target
 EOL"
+
+# Ensure log files exist and have correct permissions
+sudo touch /var/log/laravel-queue.log /var/log/laravel-queue.error.log || true
+sudo chown www-data:www-data /var/log/laravel-queue.log /var/log/laravel-queue.error.log || true
+sudo chmod 640 /var/log/laravel-queue.log /var/log/laravel-queue.error.log || true
 
 # Reload systemd and start queue service
 sudo systemctl daemon-reload
