@@ -153,6 +153,13 @@ if [ -f "$SUBDOMAIN_FILE" ]; then
                     check_command "Failed to remove PHPMyAdmin"
                 fi
 
+                # Confirm destructive action
+                read -r -p "This will remove the application, database, and configs. Continue? (y/N): " CONFIRM_UNINSTALL
+                if [[ ! "$CONFIRM_UNINSTALL" =~ ^[Yy]$ ]]; then
+                    echo -e "${YELLOW}Uninstall cancelled by user.${NC}"
+                    exit 0
+                fi
+
                 # 8. Remove Cron Jobs
                 echo -e "${GREEN}Removing cron jobs...${NC}"
                 TEMP_CRON=$(mktemp)
@@ -169,18 +176,53 @@ if [ -f "$SUBDOMAIN_FILE" ]; then
 
                 # 10. Remove hosts entries
                 if [ -n "$LARAVEL_SUBDOMAIN" ] && [ -n "$HTML5_SUBDOMAIN" ]; then
-                    sudo sed -i "/${LARAVEL_SUBDOMAIN}/d" /etc/hosts
-                    sudo sed -i "/${HTML5_SUBDOMAIN}/d" /etc/hosts
-                    check_command "Failed to remove hosts entries"
+                    sudo sed -i "/${LARAVEL_SUBDOMAIN}/d" /etc/hosts || true
+                    sudo sed -i "/${HTML5_SUBDOMAIN}/d" /etc/hosts || true
+                    echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: Removed hosts entries for ${LARAVEL_SUBDOMAIN} and ${HTML5_SUBDOMAIN}" | sudo tee -a /var/log/powerps_install.log >/dev/null
                 fi
 
-                # Stop Laravel Queue Service
-                if systemctl is-active --quiet laravel-queue; then
-                    echo -e "${GREEN}Stopping Laravel Queue Service...${NC}"
-                    sudo systemctl stop laravel-queue
-                    sudo systemctl disable laravel-queue
-                    sudo rm -f /etc/systemd/system/laravel-queue.service
-                    sudo systemctl daemon-reload
+                # Stop and remove Laravel Queue Service
+                if systemctl list-unit-files | grep -q '^laravel-queue\.service'; then
+                    echo -e "${GREEN}Stopping and removing Laravel Queue Service...${NC}"
+                    sudo systemctl stop laravel-queue || true
+                    sudo systemctl disable laravel-queue || true
+                    sudo rm -f /etc/systemd/system/laravel-queue.service || true
+                    sudo systemctl daemon-reload || true
+                    echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: laravel-queue service removed" | sudo tee -a /var/log/powerps_install.log >/dev/null
+                fi
+
+                # Remove queue logs (optional)
+                if [ -f /var/log/laravel-queue.log ] || [ -f /var/log/laravel-queue.error.log ]; then
+                    echo -e "${GREEN}Archiving and removing Laravel queue logs...${NC}"
+                    sudo mv /var/log/laravel-queue.log /var/log/laravel-queue.log.bak_$(date +%Y%m%d_%H%M%S) 2>/dev/null || true
+                    sudo mv /var/log/laravel-queue.error.log /var/log/laravel-queue.error.log.bak_$(date +%Y%m%d_%H%M%S) 2>/dev/null || true
+                    echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: Archived laravel queue logs" | sudo tee -a /var/log/powerps_install.log >/dev/null
+                fi
+
+                # Stop and remove Certbot timer/service (if present)
+                if systemctl list-unit-files | grep -q '^certbot-renew\.timer'; then
+                    echo -e "${GREEN}Stopping and removing certbot renewal timer/service...${NC}"
+                    sudo systemctl stop certbot-renew.timer || true
+                    sudo systemctl disable certbot-renew.timer || true
+                    sudo rm -f /etc/systemd/system/certbot-renew.timer /etc/systemd/system/certbot-renew.service || true
+                    sudo systemctl daemon-reload || true
+                    echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: certbot renewal units removed" | sudo tee -a /var/log/powerps_install.log >/dev/null
+                fi
+
+                # Optionally delete Let's Encrypt certs
+                if command -v certbot >/dev/null 2>&1; then
+                    read -r -p "Also delete Let's Encrypt certs for ${LARAVEL_SUBDOMAIN} and ${HTML5_SUBDOMAIN}? (y/N): " DELCERTS
+                    if [[ "$DELCERTS" =~ ^[Yy]$ ]]; then
+                        sudo certbot delete --cert-name "${LARAVEL_SUBDOMAIN}" || true
+                        sudo certbot delete --cert-name "${HTML5_SUBDOMAIN}" || true
+                        echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: Requested deletion of certs for ${LARAVEL_SUBDOMAIN} and ${HTML5_SUBDOMAIN}" | sudo tee -a /var/log/powerps_install.log >/dev/null
+                    fi
+                fi
+
+                # Remove stored MySQL root password file if exists
+                if [ -f /root/.mysql_root_pass ]; then
+                    sudo rm -f /root/.mysql_root_pass || true
+                    echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: Removed /root/.mysql_root_pass" | sudo tee -a /var/log/powerps_install.log >/dev/null
                 fi
 
                 echo -e "${GREEN}Uninstallation completed successfully!${NC}"
