@@ -262,6 +262,21 @@ sudo apt-get install -y apache2 mysql-server php8.3 php8.3-mysql libapache2-mod-
     exit 1
 }
 
+# Ensure MySQL is running
+echo -e "${GREEN}Ensuring MySQL service is running...${NC}"
+sudo systemctl start mysql
+sudo systemctl enable mysql
+
+# Wait for MySQL socket to be available
+echo -e "${GREEN}Waiting for MySQL socket...${NC}"
+for i in {1..30}; do
+    if [ -S /var/run/mysqld/mysqld.sock ]; then
+        break
+    fi
+    echo -n "."
+    sleep 1
+done
+echo
 
 # Secure MySQL Installation using expect
 echo -e "${GREEN}Securing MySQL Installation...${NC}"
@@ -278,23 +293,45 @@ fi
 SECURE_MYSQL=$(expect -c "
 set timeout 10
 spawn sudo mysql_secure_installation
-expect \"VALIDATE PASSWORD COMPONENT can be used to test passwords\"
-send \"n\r\"
-expect \"New password:\"
-send \"${MYSQL_ROOT_PASSWORD}\r\"
-expect \"Re-enter new password:\"
-send \"${MYSQL_ROOT_PASSWORD}\r\"
-expect \"Do you wish to continue with the password provided?\"
-send \"y\r\"
-expect \"Remove anonymous users?\"
-send \"y\r\"
-expect \"Disallow root login remotely?\"
-send \"y\r\"
-expect \"Remove test database and access to it?\"
-send \"y\r\"
-expect \"Reload privilege tables now?\"
-send \"y\r\"
-expect eof
+expect {
+    \"Enter password for user root:\" {
+        send \"\r\"
+        exp_continue
+    }
+    \"VALIDATE PASSWORD COMPONENT\" {
+        send \"n\r\"
+        exp_continue
+    }
+    \"New password:\" {
+        send \"${MYSQL_ROOT_PASSWORD}\r\"
+        exp_continue
+    }
+    \"Re-enter new password:\" {
+        send \"${MYSQL_ROOT_PASSWORD}\r\"
+        exp_continue
+    }
+    \"Do you wish to continue with the password provided?\" {
+        send \"y\r\"
+        exp_continue
+    }
+    \"Remove anonymous users?\" {
+        send \"y\r\"
+        exp_continue
+    }
+    \"Disallow root login remotely?\" {
+        send \"y\r\"
+        exp_continue
+    }
+    \"Remove test database and access to it?\" {
+        send \"y\r\"
+        exp_continue
+    }
+    \"Reload privilege tables now?\" {
+        send \"y\r\"
+        exp_continue
+    }
+    eof
+}
 ")
 echo "$SECURE_MYSQL"
 # Do not log or print the MySQL root password anywhere else
