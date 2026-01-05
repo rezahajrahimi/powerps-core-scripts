@@ -278,10 +278,22 @@ sudo apt-get install -y software-properties-common curl openssl
 sudo add-apt-repository -y ppa:ondrej/php
 sudo apt-get update
 
-sudo apt-get install -y apache2 mysql-server php8.3 php8.3-mysql libapache2-mod-php8.3 php8.3-cli php8.3-zip php8.3-xml php8.3-mbstring php8.3-curl php8.3-gd php-imagick libmagickwand-dev composer unzip git expect python3-certbot-apache certbot || {
+# Install PHP 8.3 and specific extensions
+sudo apt-get install -y apache2 mysql-server \
+    php8.3 php8.3-mysql libapache2-mod-php8.3 php8.3-cli php8.3-zip \
+    php8.3-xml php8.3-dom php8.3-mbstring php8.3-curl php8.3-gd \
+    php8.3-bcmath php8.3-intl php8.3-readline \
+    php-imagick libmagickwand-dev composer unzip git expect \
+    python3-certbot-apache certbot || {
     echo -e "${RED}خطا در نصب پکیج‌ها${NC}"
     exit 1
 }
+
+# Force PHP 8.3 as default
+echo -e "${GREEN}Setting PHP 8.3 as default...${NC}"
+sudo update-alternatives --set php /usr/bin/php8.3
+sudo a2enmod php8.3
+sudo systemctl restart apache2
 
 # Ensure MySQL is running
 echo -e "${GREEN}Ensuring MySQL service is running...${NC}"
@@ -428,6 +440,14 @@ if [ -f "/var/www/html/laravel-app/bolt.so" ]; then
     done
     
     echo -e "${GREEN}Bolt extension configured successfully in $PHP_EXT_DIR${NC}"
+    
+    # Verify extension is loaded
+    if php8.3 -m | grep -q "bolt"; then
+        echo -e "${GREEN}Bolt extension verified and loaded.${NC}"
+    else
+        echo -e "${RED}Error: Bolt extension is not loading. Please check PHP logs.${NC}"
+        # Don't exit yet, maybe it needs a restart or manual check
+    fi
 else
     echo -e "${YELLOW}Warning: bolt.so not found in laravel-app directory${NC}"
 fi
@@ -453,9 +473,13 @@ sudo systemctl restart apache2
 
 # Install Composer dependencies
 echo -e "${GREEN}Installing Composer dependencies...${NC}"
-run_with_retry "composer install --no-interaction --no-progress --prefer-dist" 3 5 || {
-    echo -e "${RED}Composer install failed${NC}"
-    exit 1
+# Use php8.3 explicitly for composer to avoid version conflicts
+run_with_retry "php8.3 /usr/bin/composer install --no-interaction --no-progress --prefer-dist" 3 5 || {
+    echo -e "${RED}Composer install failed. Trying with --ignore-platform-reqs...${NC}"
+    run_with_retry "php8.3 /usr/bin/composer install --no-interaction --no-progress --prefer-dist --ignore-platform-reqs" 3 5 || {
+        echo -e "${RED}Composer install failed even with --ignore-platform-reqs${NC}"
+        exit 1
+    }
 }
 
 
@@ -558,18 +582,18 @@ sudo chown www-data:www-data /var/www/html/laravel-app/.env || true
 sudo chmod 600 /var/www/html/laravel-app/.env || true
 # Generate app key
 echo -e "${GREEN}Generating app key...${NC}"
-php artisan key:generate
+php8.3 artisan key:generate
 
 # Run migrations
 echo -e "${GREEN}Running migrations...${NC}"
-php artisan migrate --force || {
+php8.3 artisan migrate --force || {
     echo -e "${RED}Migration failed. Checking database connection...${NC}"
     exit 1
 }
 
 # Run Link Storage
 echo -e "${GREEN}Linking storage...${NC}"
-php artisan storage:link --force || true
+php8.3 artisan storage:link --force || true
 # Check if phpMyAdmin is installed
 if [ -d "/var/www/html/phpmyadmin" ]; then
     echo -e "${GREEN}phpMyAdmin is already installed.${NC}"
@@ -666,7 +690,7 @@ echo "127.0.0.1 ${HTML5_SUBDOMAIN}" | sudo tee -a /etc/hosts
 
 # Add schedule to cron job
 echo -e "${GREEN}Adding schedule to cron job...${NC}"
-(crontab -l ; echo "* * * * * cd /var/www/html/laravel-app && php artisan schedule:run >> /dev/null 2>&1") | crontab -
+(crontab -l ; echo "* * * * * cd /var/www/html/laravel-app && /usr/bin/php8.3 artisan schedule:run >> /dev/null 2>&1") | crontab -
 
 # Ensure services start on reboot
 echo -e "${GREEN}Ensuring services start on reboot...${NC}"
@@ -714,7 +738,7 @@ Restart=always
 RestartSec=5
 StartLimitIntervalSec=60
 StartLimitBurst=5
-ExecStart=/usr/bin/php /var/www/html/laravel-app/artisan queue:work --sleep=3 --tries=3 --timeout=0
+ExecStart=/usr/bin/php8.3 /var/www/html/laravel-app/artisan queue:work --sleep=3 --tries=3 --timeout=0
 StandardOutput=append:/var/log/laravel-queue.log
 StandardError=append:/var/log/laravel-queue.error.log
 
