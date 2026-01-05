@@ -285,13 +285,34 @@ sudo apt-get install -y apache2 mysql-server php8.3 php8.3-mysql libapache2-mod-
 
 # Ensure MySQL is running
 echo -e "${GREEN}Ensuring MySQL service is running...${NC}"
-sudo systemctl start mysql
+# Create socket directory if it doesn't exist (common issue in some environments)
+sudo mkdir -p /var/run/mysqld
+sudo chown mysql:mysql /var/run/mysqld
+
+# Try to start MySQL with a fallback to re-configuration
+if ! sudo systemctl start mysql; then
+    echo -e "${YELLOW}MySQL failed to start. Attempting to fix dependencies and re-configure...${NC}"
+    sudo apt-get install -f -y
+    sudo dpkg --configure -a
+    sudo systemctl daemon-reload
+    
+    # Try starting again
+    if ! sudo systemctl start mysql; then
+        echo -e "${RED}MySQL still failing to start. Checking logs for clues...${NC}"
+        if [ -f /var/log/mysql/error.log ]; then
+            sudo tail -n 20 /var/log/mysql/error.log
+        else
+            sudo journalctl -xeu mysql.service --no-pager | tail -n 20
+        fi
+        exit 1
+    fi
+fi
 sudo systemctl enable mysql
 
 # Wait for MySQL socket to be available
 echo -e "${GREEN}Waiting for MySQL socket...${NC}"
 for i in {1..30}; do
-    if [ -S /var/run/mysqld/mysqld.sock ]; then
+    if [ -S /var/run/mysqld/mysqld.sock ] || [ -S /var/lib/mysql/mysql.sock ]; then
         break
     fi
     echo -n "."
