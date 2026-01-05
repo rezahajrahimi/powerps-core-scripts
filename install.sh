@@ -139,96 +139,9 @@ if [ -f "$SUBDOMAIN_FILE" ]; then
                 # 1. Stop running services
                 echo -e "${GREEN}Stopping services...${NC}"
                 # Stop Laravel processes
-                if pgrep -f artisan > /dev/null; then
-                    pkill -f artisan
-                    check_command "Failed to stop Laravel processes"
-                fi
-
-                # 2. Remove Laravel application
-                echo -e "${GREEN}Removing Laravel application...${NC}"
-                if [ -d "/var/www/html/laravel-app" ]; then
-                    backup_existing "/var/www/html/laravel-app"
-                    sudo rm -rf /var/www/html/laravel-app || true
-                    check_command "Failed to remove Laravel application directory"
-                fi
-
-                # 3. Remove WebApp
-                echo -e "${GREEN}Removing WebApp...${NC}"
-                if [ -d "/var/www/html/powerps-webapp" ]; then
-                    backup_existing "/var/www/html/powerps-webapp"
-                    sudo rm -rf /var/www/html/powerps-webapp || true
-                    check_command "Failed to remove WebApp directory"
-                fi
-
-                # 4. Remove Database and User
-                echo -e "${GREEN}Removing database and user...${NC}"
-                if mysql -e "USE ${DB_NAME}" 2>/dev/null; then
-                    sudo mysql -e "DROP DATABASE IF EXISTS ${DB_NAME};"
-                    check_command "Failed to drop database"
-                    
-                    sudo mysql -e "DROP USER IF EXISTS '${DB_USER}'@'localhost';"
-                    check_command "Failed to drop database user"
-                    
-                    sudo mysql -e "FLUSH PRIVILEGES;"
-                    check_command "Failed to flush privileges"
-                fi
-
-                # 5. Remove Apache Configurations
-                echo -e "${GREEN}Removing Apache configurations...${NC}"
-                if [ -f "/etc/apache2/sites-available/powerps-core.conf" ]; then
-                    sudo a2dissite powerps-core 2>/dev/null
-                    sudo rm -f /etc/apache2/sites-available/powerps-core.conf
-                    check_command "Failed to remove core virtual host"
-                fi
-
-                if [ -f "/etc/apache2/sites-available/powerps-webapp.conf" ]; then
-                    sudo a2dissite powerps-webapp 2>/dev/null
-                    sudo rm -f /etc/apache2/sites-available/powerps-webapp.conf
-                    check_command "Failed to remove webapp virtual host"
-                fi
-
-                # 6. Restart Apache if it's running
-                if systemctl is-active --quiet apache2; then
-                    echo -e "${GREEN}Restarting Apache...${NC}"
-                    sudo systemctl restart apache2
-                    check_command "Failed to restart Apache"
-                fi
-
-                # 7. Remove PHPMyAdmin if exists
-                if [ -d "/var/www/html/phpmyadmin" ]; then
-                    echo -e "${GREEN}Removing PHPMyAdmin...${NC}"
-                    sudo rm -rf /var/www/html/phpmyadmin
-                    check_command "Failed to remove PHPMyAdmin"
-                fi
-
-                # Confirm destructive action
-                read -r -p "This will remove the application, database, and configs. Continue? (y/N): " CONFIRM_UNINSTALL
-                if [[ ! "$CONFIRM_UNINSTALL" =~ ^[Yy]$ ]]; then
-                    echo -e "${YELLOW}Uninstall cancelled by user.${NC}"
-                    exit 0
-                fi
-
-                # 8. Remove Cron Jobs
-                echo -e "${GREEN}Removing cron jobs...${NC}"
-                TEMP_CRON=$(mktemp)
-                crontab -l 2>/dev/null | grep -v 'laravel-app' | grep -v 'powerps' | grep -v 'artisan' > "$TEMP_CRON"
-                crontab "$TEMP_CRON"
-                rm -f "$TEMP_CRON"
-                check_command "Failed to update cron jobs"
-
-                # 9. Remove configuration file
-                if [ -f "$SUBDOMAIN_FILE" ]; then
-                    rm -f "$SUBDOMAIN_FILE"
-                    check_command "Failed to remove subdomain configuration file"
-                fi
-
-                # 10. Remove hosts entries
-                if [ -n "$LARAVEL_SUBDOMAIN" ] && [ -n "$HTML5_SUBDOMAIN" ]; then
-                    sudo sed -i "/${LARAVEL_SUBDOMAIN}/d" /etc/hosts || true
-                    sudo sed -i "/${HTML5_SUBDOMAIN}/d" /etc/hosts || true
-                    echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: Removed hosts entries for ${LARAVEL_SUBDOMAIN} and ${HTML5_SUBDOMAIN}" | sudo tee -a /var/log/powerps_install.log >/dev/null
-                fi
-
+                sudo pkill -f artisan || true
+                sudo pkill -f "php8.3 artisan" || true
+                
                 # Stop and remove Laravel Queue Service
                 if systemctl list-unit-files | grep -q '^laravel-queue\.service'; then
                     echo -e "${GREEN}Stopping and removing Laravel Queue Service...${NC}"
@@ -236,25 +149,83 @@ if [ -f "$SUBDOMAIN_FILE" ]; then
                     sudo systemctl disable laravel-queue || true
                     sudo rm -f /etc/systemd/system/laravel-queue.service || true
                     sudo systemctl daemon-reload || true
-                    echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: laravel-queue service removed" | sudo tee -a /var/log/powerps_install.log >/dev/null
                 fi
 
-                # Remove queue logs (optional)
-                if [ -f /var/log/laravel-queue.log ] || [ -f /var/log/laravel-queue.error.log ]; then
-                    echo -e "${GREEN}Archiving and removing Laravel queue logs...${NC}"
-                    sudo mv /var/log/laravel-queue.log /var/log/laravel-queue.log.bak_$(date +%Y%m%d_%H%M%S) 2>/dev/null || true
-                    sudo mv /var/log/laravel-queue.error.log /var/log/laravel-queue.error.log.bak_$(date +%Y%m%d_%H%M%S) 2>/dev/null || true
-                    echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: Archived laravel queue logs" | sudo tee -a /var/log/powerps_install.log >/dev/null
+                # 2. Remove Laravel application
+                echo -e "${GREEN}Removing Laravel application...${NC}"
+                if [ -d "/var/www/html/laravel-app" ]; then
+                    backup_existing "/var/www/html/laravel-app"
+                    sudo rm -rf /var/www/html/laravel-app || true
                 fi
 
-                # Stop and remove Certbot timer/service (if present)
+                # 3. Remove WebApp
+                echo -e "${GREEN}Removing WebApp...${NC}"
+                if [ -d "/var/www/html/powerps-webapp" ]; then
+                    backup_existing "/var/www/html/powerps-webapp"
+                    sudo rm -rf /var/www/html/powerps-webapp || true
+                fi
+
+                # 4. Remove Database and User
+                echo -e "${GREEN}Removing database and user...${NC}"
+                # Try to get credentials from .env before deleting it
+                if [ -f "/var/www/html/laravel-app/.env" ]; then
+                    DB_NAME_LOCAL=$(grep '^DB_DATABASE=' /var/www/html/laravel-app/.env | cut -d'=' -f2)
+                    DB_USER_LOCAL=$(grep '^DB_USERNAME=' /var/www/html/laravel-app/.env | cut -d'=' -f2)
+                fi
+                DB_NAME_LOCAL=${DB_NAME_LOCAL:-powerps_db}
+                DB_USER_LOCAL=${DB_USER_LOCAL:-powerps_user}
+
+                sudo mysql -e "DROP DATABASE IF EXISTS ${DB_NAME_LOCAL};" || true
+                sudo mysql -e "DROP USER IF EXISTS '${DB_USER_LOCAL}'@'localhost';" || true
+                sudo mysql -e "FLUSH PRIVILEGES;" || true
+
+                # 5. Remove Apache Configurations
+                echo -e "${GREEN}Removing Apache configurations...${NC}"
+                if [ -f "/etc/apache2/sites-available/powerps-core.conf" ]; then
+                    sudo a2dissite powerps-core || true
+                    sudo rm -f /etc/apache2/sites-available/powerps-core.conf || true
+                fi
+
+                if [ -f "/etc/apache2/sites-available/powerps-webapp.conf" ]; then
+                    sudo a2dissite powerps-webapp || true
+                    sudo rm -f /etc/apache2/sites-available/powerps-webapp.conf || true
+                fi
+
+                # 6. Restart Apache
+                echo -e "${GREEN}Restarting Apache...${NC}"
+                sudo systemctl restart apache2 || true
+
+                # 7. Remove PHPMyAdmin if exists
+                if [ -d "/var/www/html/phpmyadmin" ]; then
+                    echo -e "${GREEN}Removing PHPMyAdmin...${NC}"
+                    sudo rm -rf /var/www/html/phpmyadmin || true
+                fi
+
+                # 8. Remove Cron Jobs
+                echo -e "${GREEN}Removing cron jobs...${NC}"
+                crontab -l 2>/dev/null | grep -v 'laravel-app' | grep -v 'powerps' | grep -v 'artisan' | crontab - || true
+
+                # 9. Remove configuration file
+                if [ -f "$SUBDOMAIN_FILE" ]; then
+                    rm -f "$SUBDOMAIN_FILE" || true
+                fi
+
+                # 10. Remove hosts entries
+                if [ -n "${LARAVEL_SUBDOMAIN:-}" ] && [ -n "${HTML5_SUBDOMAIN:-}" ]; then
+                    sudo sed -i "/${LARAVEL_SUBDOMAIN}/d" /etc/hosts || true
+                    sudo sed -i "/${HTML5_SUBDOMAIN}/d" /etc/hosts || true
+                fi
+
+                # Remove queue logs
+                sudo rm -f /var/log/laravel-queue.log /var/log/laravel-queue.error.log || true
+
+                # Stop and remove Certbot timer/service
                 if systemctl list-unit-files | grep -q '^certbot-renew\.timer'; then
                     echo -e "${GREEN}Stopping and removing certbot renewal timer/service...${NC}"
                     sudo systemctl stop certbot-renew.timer || true
                     sudo systemctl disable certbot-renew.timer || true
                     sudo rm -f /etc/systemd/system/certbot-renew.timer /etc/systemd/system/certbot-renew.service || true
                     sudo systemctl daemon-reload || true
-                    echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: certbot renewal units removed" | sudo tee -a /var/log/powerps_install.log >/dev/null
                 fi
 
                 # Optionally delete Let's Encrypt certs
@@ -263,19 +234,13 @@ if [ -f "$SUBDOMAIN_FILE" ]; then
                     if [[ "$DELCERTS" =~ ^[Yy]$ ]]; then
                         sudo certbot delete --cert-name "${LARAVEL_SUBDOMAIN}" || true
                         sudo certbot delete --cert-name "${HTML5_SUBDOMAIN}" || true
-                        echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: Requested deletion of certs for ${LARAVEL_SUBDOMAIN} and ${HTML5_SUBDOMAIN}" | sudo tee -a /var/log/powerps_install.log >/dev/null
                     fi
                 fi
 
-                # Remove stored MySQL root password file if exists
-                if [ -f /root/.mysql_root_pass ]; then
-                    sudo rm -f /root/.mysql_root_pass || true
-                    echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: Removed /root/.mysql_root_pass" | sudo tee -a /var/log/powerps_install.log >/dev/null
-                fi
+                # Remove stored MySQL root password file
+                sudo rm -f /root/.mysql_root_pass || true
 
                 echo -e "${GREEN}Uninstallation completed successfully!${NC}"
-                echo -e "${YELLOW}Note: Some system packages (Apache, MySQL, PHP) were left installed.${NC}"
-                echo -e "${YELLOW}If you want to remove them, please use: sudo apt remove apache2 mysql-server php8.3${NC}"
                 exit 0
                 ;;
             3)
