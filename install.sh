@@ -120,24 +120,22 @@ SUBDOMAIN_FILE="subdomains.conf"
 if [ -f "$SUBDOMAIN_FILE" ]; then
     source "$SUBDOMAIN_FILE"
 
-    # Ask user if they want to install or uninstall
-    echo -e "${YELLOW}Subdomains are already set. What would you like to do?${NC}"
-    select choice in "Install" "Uninstall" "SSL Certificate"; do
-
+    # Ask user what they want to do
+    echo -e "${YELLOW}Subdomains are already set (${LARAVEL_SUBDOMAIN}, ${HTML5_SUBDOMAIN}).${NC}"
+    echo -e "${CYAN}Please choose an option:${NC}"
+    echo "1) Install / Update"
+    echo "2) Uninstall"
+    echo "3) SSL Certificate (Certbot)"
+    
+    while true; do
+        read -p "Enter choice [1-3]: " choice
         case $choice in
-            Install)
+            1)
+                echo -e "${GREEN}Proceeding with Installation...${NC}"
                 break
                 ;;
-            "SSL Certificate")
-                setup_ssl
-                echo -e "${GREEN}SSL setup process finished.${NC}"
-                exit 0
-                ;;
-            Uninstall)
+            2)
                 echo -e "${GREEN}Starting uninstallation process...${NC}"
-                
-
-
                 # 1. Stop running services
                 echo -e "${GREEN}Stopping services...${NC}"
                 # Stop Laravel processes
@@ -279,6 +277,14 @@ if [ -f "$SUBDOMAIN_FILE" ]; then
                 echo -e "${YELLOW}Note: Some system packages (Apache, MySQL, PHP) were left installed.${NC}"
                 echo -e "${YELLOW}If you want to remove them, please use: sudo apt remove apache2 mysql-server php8.3${NC}"
                 exit 0
+                ;;
+            3)
+                setup_ssl
+                echo -e "${GREEN}SSL setup process finished.${NC}"
+                exit 0
+                ;;
+            *)
+                echo -e "${RED}Invalid option. Please enter 1, 2, or 3.${NC}"
                 ;;
         esac
     done
