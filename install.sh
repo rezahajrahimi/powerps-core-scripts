@@ -334,22 +334,45 @@ echo
 
 # Secure MySQL Installation using expect
 echo -e "${GREEN}Securing MySQL Installation...${NC}"
-# Prompt for MySQL root password to use for mysql_secure_installation (or press Enter to auto-generate a strong one)
-read -s -e -p "Enter desired MySQL root password (leave empty to generate one): " MYSQL_ROOT_PASSWORD
+
+# Check if we already have a saved root password
+if [ -f /root/.mysql_root_pass ]; then
+    EXISTING_ROOT_PASS=$(sudo cat /root/.mysql_root_pass)
+    echo -e "${YELLOW}Existing MySQL root password found in /root/.mysql_root_pass.${NC}"
+fi
+
+# Prompt for MySQL root password
+read -s -e -p "Enter desired MySQL root password (leave empty to use existing or generate one): " MYSQL_ROOT_PASSWORD
 echo
+
 if [ -z "${MYSQL_ROOT_PASSWORD}" ]; then
-    MYSQL_ROOT_PASSWORD=$(openssl rand -base64 16)
-    echo "Generated MySQL root password: (will be saved to /root/.mysql_root_pass - permissions restricted)"
+    if [ -n "${EXISTING_ROOT_PASS:-}" ]; then
+        MYSQL_ROOT_PASSWORD="${EXISTING_ROOT_PASS}"
+        echo "Using existing MySQL root password."
+    else
+        MYSQL_ROOT_PASSWORD=$(openssl rand -base64 16)
+        echo "Generated new MySQL root password: (will be saved to /root/.mysql_root_pass)"
+        echo "${MYSQL_ROOT_PASSWORD}" | sudo tee /root/.mysql_root_pass >/dev/null
+        sudo chmod 600 /root/.mysql_root_pass
+    fi
+else
+    # Update the saved password file if user provided a new one
     echo "${MYSQL_ROOT_PASSWORD}" | sudo tee /root/.mysql_root_pass >/dev/null
     sudo chmod 600 /root/.mysql_root_pass
 fi
-# Use expect to automate mysql_secure_installation with provided password
+
+# Use expect to automate mysql_secure_installation
+# We handle both cases: no password set yet, or password already set
 SECURE_MYSQL=$(expect -c "
 set timeout 10
 spawn sudo mysql_secure_installation
 expect {
     \"Enter password for user root:\" {
-        send \"\r\"
+        send \"${MYSQL_ROOT_PASSWORD}\r\"
+        exp_continue
+    }
+    \"Enter current password for root\" {
+        send \"${MYSQL_ROOT_PASSWORD}\r\"
         exp_continue
     }
     \"VALIDATE PASSWORD COMPONENT\" {
@@ -362,6 +385,10 @@ expect {
     }
     \"Re-enter new password:\" {
         send \"${MYSQL_ROOT_PASSWORD}\r\"
+        exp_continue
+    }
+    \"Change the password for root?\" {
+        send \"n\r\"
         exp_continue
     }
     \"Do you wish to continue with the password provided?\" {
@@ -393,11 +420,23 @@ echo "$SECURE_MYSQL"
 # Create MySQL database and user
 DB_NAME='powerps_db'
 DB_USER='powerps_user'
-DB_PASS=$(openssl rand -base64 12)
 
-echo -e "${GREEN}Creating MySQL database and user...${NC}"
-sudo mysql -e "CREATE DATABASE ${DB_NAME};" || check_command "Failed to create database ${DB_NAME}"
-sudo mysql -e "CREATE USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';" || check_command "Failed to create database user ${DB_USER}"
+# Check if .env already exists to reuse password
+if [ -f "/var/www/html/laravel-app/.env" ]; then
+    echo -e "${YELLOW}Existing .env found. Extracting database credentials...${NC}"
+    DB_PASS=$(grep '^DB_PASSWORD=' /var/www/html/laravel-app/.env | cut -d'=' -f2)
+fi
+
+# If DB_PASS is still empty (no .env or no password in it), generate new one
+if [ -z "${DB_PASS:-}" ]; then
+    DB_PASS=$(openssl rand -base64 12)
+fi
+
+echo -e "${GREEN}Creating MySQL database and user (if not exists)...${NC}"
+sudo mysql -e "CREATE DATABASE IF NOT EXISTS ${DB_NAME};" || check_command "Failed to create database ${DB_NAME}"
+sudo mysql -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';" || check_command "Failed to create database user ${DB_USER}"
+# Update password in case it changed or user existed with different pass
+sudo mysql -e "ALTER USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';" || check_command "Failed to update database user password"
 sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';" || check_command "Failed to grant privileges on ${DB_NAME}"
 sudo mysql -e "FLUSH PRIVILEGES;" || check_command "Failed to flush privileges"
 
@@ -684,18 +723,22 @@ for domain in "${LARAVEL_SUBDOMAIN}" "${HTML5_SUBDOMAIN}"; do
     }
 done
 
-# Add domain entries to /etc/hosts
-echo "127.0.0.1 ${LARAVEL_SUBDOMAIN}" | sudo tee -a /etc/hosts
-echo "127.0.0.1 ${HTML5_SUBDOMAIN}" | sudo tee -a /etc/hosts
+# Add domain entries to /etc/hosts (avoid duplicates)
+for domain in "${LARAVEL_SUBDOMAIN}" "${HTML5_SUBDOMAIN}"; do
+    if ! grep -q "$domain" /etc/hosts; then
+        echo "127.0.0.1 $domain" | sudo tee -a /etc/hosts
+    fi
+done
 
-# Add schedule to cron job
+# Add schedule to cron job (avoid duplicates)
 echo -e "${GREEN}Adding schedule to cron job...${NC}"
-(crontab -l ; echo "* * * * * cd /var/www/html/laravel-app && /usr/bin/php8.3 artisan schedule:run >> /dev/null 2>&1") | crontab -
+CRON_JOB="* * * * * cd /var/www/html/laravel-app && /usr/bin/php8.3 artisan schedule:run >> /dev/null 2>&1"
+(crontab -l 2>/dev/null | grep -v "artisan schedule:run" ; echo "$CRON_JOB") | crontab -
 
-# Ensure services start on reboot
+# Ensure services start on reboot (avoid duplicates)
 echo -e "${GREEN}Ensuring services start on reboot...${NC}"
-(crontab -l ; echo "@reboot systemctl restart apache2") | crontab -
-(crontab -l ; echo "@reboot systemctl restart mysql") | crontab -
+(crontab -l 2>/dev/null | grep -v "@reboot systemctl restart apache2" ; echo "@reboot systemctl restart apache2") | crontab -
+(crontab -l 2>/dev/null | grep -v "@reboot systemctl restart mysql" ; echo "@reboot systemctl restart mysql") | crontab -
 
 # Completion message
 echo -e "${CYAN}==============================${NC}"
