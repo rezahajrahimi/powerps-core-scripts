@@ -68,6 +68,23 @@ echo -e "${CYAN}==============================${NC}"
 echo -e "${YELLOW}  Setting up or Updating your core and WebApp PowerPs${NC}"
 echo -e "${CYAN}==============================${NC}"
 
+# Run requirement checks
+check_requirements() {
+    # بررسی فضای دیسک
+    free_space=$(df -m / | awk 'NR==2 {print $4}')
+    if [ "$free_space" -lt 1000 ]; then
+        echo -e "${RED}Not enough disk space. At least 1GB required${NC}"
+        exit 1
+    fi
+    
+    # بررسی رم
+    total_ram=$(free -m | awk '/^Mem:/{print $2}')
+    if [ "$total_ram" -lt 256 ]; then
+        echo -e "${YELLOW}Warning: Less than 256MB RAM available${NC}"
+    fi
+}
+check_requirements
+
 # File to store subdomains
 SUBDOMAIN_FILE="subdomains.conf"
 
@@ -257,6 +274,10 @@ fi
 # Update package lists and install necessary packages
 echo -e "${GREEN}Updating package lists and installing necessary packages...${NC}"
 sudo apt-get update
+sudo apt-get install -y software-properties-common curl openssl
+sudo add-apt-repository -y ppa:ondrej/php
+sudo apt-get update
+
 sudo apt-get install -y apache2 mysql-server php8.3 php8.3-mysql libapache2-mod-php8.3 php8.3-cli php8.3-zip php8.3-xml php8.3-mbstring php8.3-curl php8.3-gd php-imagick libmagickwand-dev composer unzip git expect python3-certbot-apache certbot || {
     echo -e "${RED}خطا در نصب پکیج‌ها${NC}"
     exit 1
@@ -367,18 +388,25 @@ fi
 # Configure Bolt extension
 echo -e "${GREEN}Configuring Bolt extension...${NC}"
 if [ -f "/var/www/html/laravel-app/bolt.so" ]; then
-    # Copy bolt.so to PHP extensions directory
-    sudo cp /var/www/html/laravel-app/bolt.so /usr/lib/php/20230831/
+    # Get PHP extension directory dynamically
+    PHP_EXT_DIR=$(php -i | grep '^extension_dir' | awk '{print $3}')
+    if [ -z "$PHP_EXT_DIR" ]; then
+        PHP_EXT_DIR="/usr/lib/php/20230831"
+    fi
+    
+    sudo mkdir -p "$PHP_EXT_DIR"
+    sudo cp /var/www/html/laravel-app/bolt.so "$PHP_EXT_DIR/"
     
     # Add Bolt extension to PHP configurations if not already added
-    if ! grep -q "extension=bolt.so" /etc/php/8.3/apache2/php.ini; then
-        echo "extension=bolt.so" | sudo tee -a /etc/php/8.3/apache2/php.ini
-    fi
-    if ! grep -q "extension=bolt.so" /etc/php/8.3/cli/php.ini; then
-        echo "extension=bolt.so" | sudo tee -a /etc/php/8.3/cli/php.ini
-    fi
+    for ini in /etc/php/8.3/apache2/php.ini /etc/php/8.3/cli/php.ini; do
+        if [ -f "$ini" ]; then
+            if ! grep -q "extension=bolt.so" "$ini"; then
+                echo "extension=bolt.so" | sudo tee -a "$ini"
+            fi
+        fi
+    done
     
-    echo -e "${GREEN}Bolt extension configured successfully${NC}"
+    echo -e "${GREEN}Bolt extension configured successfully in $PHP_EXT_DIR${NC}"
 else
     echo -e "${YELLOW}Warning: bolt.so not found in laravel-app directory${NC}"
 fi
@@ -513,9 +541,14 @@ php artisan key:generate
 
 # Run migrations
 echo -e "${GREEN}Running migrations...${NC}"
-php artisan migrate
+php artisan migrate --force || {
+    echo -e "${RED}Migration failed. Checking database connection...${NC}"
+    exit 1
+}
+
 # Run Link Storage
-php artisan storage:link
+echo -e "${GREEN}Linking storage...${NC}"
+php artisan storage:link --force || true
 # Check if phpMyAdmin is installed
 if [ -d "/var/www/html/phpmyadmin" ]; then
     echo -e "${GREEN}phpMyAdmin is already installed.${NC}"
@@ -644,37 +677,6 @@ else
 fi
 
 echo -e "${GREEN}PowerPs installation complete!${NC}"
-
-# اضافه کردن لاگ
-log_file="/var/log/powerps_install.log"
-log_message() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$log_file"
-}
-
-# اضافه کردن تابع پشتیبان‌گیری
-backup_existing() {
-    if [ -d "$1" ]; then
-        backup_dir="${1}_backup_$(date +%Y%m%d_%H%M%S)"
-        mv "$1" "$backup_dir"
-        log_message "Backed up $1 to $backup_dir"
-    fi
-}
-
-# اضافه کردن بررسی پیش‌نیازها
-check_requirements() {
-    # بررسی فضای دیسک
-    free_space=$(df -m / | awk 'NR==2 {print $4}')
-    if [ "$free_space" -lt 1000 ]; then
-        echo -e "${RED}Not enough disk space. At least 1GB required${NC}"
-        exit 1
-    fi
-    
-    # بررسی رم
-    total_ram=$(free -m | awk '/^Mem:/{print $2}')
-    if [ "$total_ram" -lt 256 ]; then
-        echo -e "${YELLOW}Warning: Less than 256MB RAM available${NC}"
-    fi
-}
 
 # Create and configure Laravel Queue Service (systemd supervised)
 echo -e "${GREEN}Setting up Laravel Queue Service...${NC}"
