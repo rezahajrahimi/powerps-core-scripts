@@ -63,6 +63,34 @@ run_with_retry() {
     return 0
 }
 
+# Function to setup SSL certificates
+setup_ssl() {
+    echo -e "${GREEN}Obtaining TLS certificates for ${LARAVEL_SUBDOMAIN} and ${HTML5_SUBDOMAIN}...${NC}"
+    
+    # Ensure certbot is installed
+    if ! command -v certbot >/dev/null 2>&1; then
+        echo -e "${YELLOW}Certbot not found. Installing...${NC}"
+        sudo apt-get update
+        sudo apt-get install -y python3-certbot-apache certbot
+    fi
+
+    # Use default email if user leaves empty
+    read -e -p "Enter email for Let's Encrypt notifications (press Enter to use admin@${LARAVEL_SUBDOMAIN#*.}): " CERTBOT_EMAIL
+    if [ -z "${CERTBOT_EMAIL}" ]; then
+        CERTBOT_EMAIL="admin@${LARAVEL_SUBDOMAIN#*.}"
+    fi
+    for domain in "${LARAVEL_SUBDOMAIN}" "${HTML5_SUBDOMAIN}"; do
+        if [ -d "/etc/letsencrypt/live/${domain}" ]; then
+            echo -e "${YELLOW}Certificate already exists for ${domain}, skipping...${NC}"
+            continue
+        fi
+        run_with_retry "sudo certbot --apache --non-interactive --agree-tos --email ${CERTBOT_EMAIL} -d ${domain} --redirect" 3 5 || {
+            echo -e "${YELLOW}Warning: Failed to obtain certificate for ${domain}. Please run: sudo certbot --apache -d ${domain} --email ${CERTBOT_EMAIL} --agree-tos --redirect${NC}"
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: Failed to obtain certificate for ${domain}" | sudo tee -a /var/log/powerps_install.log >/dev/null
+        }
+    done
+}
+
 # Pretty title
 echo -e "${CYAN}==============================${NC}"
 echo -e "${YELLOW}  Setting up or Updating your core and WebApp PowerPs${NC}"
@@ -93,12 +121,17 @@ if [ -f "$SUBDOMAIN_FILE" ]; then
     source "$SUBDOMAIN_FILE"
 
     # Ask user if they want to install or uninstall
-    echo -e "${YELLOW}Subdomains are already set. Do you want to install or uninstall?${NC}"
-    select choice in "Install" "Uninstall"; do
+    echo -e "${YELLOW}Subdomains are already set. What would you like to do?${NC}"
+    select choice in "Install" "Uninstall" "SSL Certificate"; do
 
         case $choice in
             Install)
                 break
+                ;;
+            "SSL Certificate")
+                setup_ssl
+                echo -e "${GREEN}SSL setup process finished.${NC}"
+                exit 0
                 ;;
             Uninstall)
                 echo -e "${GREEN}Starting uninstallation process...${NC}"
@@ -706,22 +739,7 @@ sudo a2enmod rewrite || check_command "Failed to enable rewrite module"
 sudo systemctl restart apache2 || check_command "Failed to restart apache2"
 
 # Obtain TLS certificates for subdomains using Certbot (Let's Encrypt)
-echo -e "${GREEN}Obtaining TLS certificates for ${LARAVEL_SUBDOMAIN} and ${HTML5_SUBDOMAIN}...${NC}"
-# Use default email if user leaves empty
-read -e -p "Enter email for Let's Encrypt notifications (press Enter to use admin@${LARAVEL_SUBDOMAIN#*.}): " CERTBOT_EMAIL
-if [ -z "${CERTBOT_EMAIL}" ]; then
-    CERTBOT_EMAIL="admin@${LARAVEL_SUBDOMAIN#*.}"
-fi
-for domain in "${LARAVEL_SUBDOMAIN}" "${HTML5_SUBDOMAIN}"; do
-    if [ -d "/etc/letsencrypt/live/${domain}" ]; then
-        echo -e "${YELLOW}Certificate already exists for ${domain}, skipping...${NC}"
-        continue
-    fi
-    run_with_retry "sudo certbot --apache --non-interactive --agree-tos --email ${CERTBOT_EMAIL} -d ${domain} --redirect" 3 5 || {
-        echo -e "${YELLOW}Warning: Failed to obtain certificate for ${domain}. Please run: sudo certbot --apache -d ${domain} --email ${CERTBOT_EMAIL} --agree-tos --redirect${NC}"
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: Failed to obtain certificate for ${domain}" | sudo tee -a /var/log/powerps_install.log >/dev/null
-    }
-done
+setup_ssl
 
 # Add domain entries to /etc/hosts (avoid duplicates)
 for domain in "${LARAVEL_SUBDOMAIN}" "${HTML5_SUBDOMAIN}"; do
