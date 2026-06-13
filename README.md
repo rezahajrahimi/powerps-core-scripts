@@ -1,0 +1,57 @@
+# PowerPs Core Install Scripts
+
+اسکریپت نصب و به‌روزرسانی خودکار [powerps-core](https://github.com/rezahajrahimi/powerps-core) و [powerps-webapp](https://github.com/rezahajrahimi/powerps-webapp).
+
+## نصب سریع (Ubuntu 24.04)
+
+```sh
+sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rezahajrahimi/powerps-core-scripts/refs/heads/main/install.sh)" @ install
+```
+
+## این اسکریپت چه کار می‌کند؟
+
+1. PHP **8.4** و پکیج‌های لازم را نصب می‌کند
+2. ریپوی [powerps-core](https://github.com/rezahajrahimi/powerps-core) را clone یا update می‌کند
+3. **phpBolt** را از فایل‌های داخل همان ریپو فعال می‌کند
+4. Composer، migrate، cron، queue worker و SSL را راه‌اندازی می‌کند
+5. [powerps-webapp](https://github.com/rezahajrahimi/powerps-webapp) را نصب می‌کند
+
+## bolt.so از کجا می‌آید؟
+
+روی سرور **دانلود جداگانه ندارد**. فایل‌های زیر داخل ریپوی `powerps-core` commit شده‌اند و با `git clone` / `git pull` روی سرور می‌آیند:
+
+- `bolt.so` (پیش‌فرض x86_64)
+- `bolt-x86_64.so`
+- `bolt-aarch64.so`
+
+اسکریپت نصب فایل مناسب معماری CPU را انتخاب و در مسیر اکستنشن PHP کپی می‌کند. نسخه PHP و phpBolt از فایل‌های `.powerps-php-version` و `.powerps-bolt-version` خوانده می‌شود.
+
+## گزینه‌های منو
+
+| گزینه | کار |
+|-------|-----|
+| 1 | نصب / به‌روزرسانی |
+| 2 | حذف کامل |
+| 3 | تنظیم SSL (Certbot) |
+
+## مسیرهای مهم بعد از نصب
+
+| مسیر | توضیح |
+|------|-------|
+| `/var/www/html/laravel-app` | بک‌اند PowerPs Core |
+| `/var/www/html/powerps-webapp` | وب‌اپ فرانت |
+| `/var/www/html/laravel-app/.env` | تنظیمات محیطی |
+
+## به‌روزرسانی
+
+همان دستور نصب را دوباره اجرا کنید و گزینه **Install / Update** را بزنید. اسکریپت `git pull` می‌زند و PHP/phpBolt را با نسخه جدید ریپو هماهنگ می‌کند.
+
+## English
+
+Automated installer for PowerPs Core (Laravel backend) and PowerPs WebApp.
+
+```sh
+sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rezahajrahimi/powerps-core-scripts/refs/heads/main/install.sh)" @ install
+```
+
+**phpBolt:** bundled inside `powerps-core` repo, copied to PHP extension dir by this script — not downloaded separately.
