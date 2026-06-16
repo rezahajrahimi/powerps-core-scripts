@@ -127,6 +127,9 @@ configure_bolt() {
  local bolt_src
  local php_ext_dir
  local php_bin="php${php_version}"
+ local ini_file="/etc/php/${php_version}/mods-available/bolt.ini"
+ local cli_conf_dir="/etc/php/${php_version}/cli/conf.d"
+ local apache_conf_dir="/etc/php/${php_version}/apache2/conf.d"
 
  bolt_src="$(pick_bolt_source)"
  if [ -z "${bolt_src}" ] || [ ! -f "${bolt_src}" ]; then
@@ -148,24 +151,29 @@ configure_bolt() {
  sudo mkdir -p "${php_ext_dir}"
  sudo cp "${bolt_src}" "${php_ext_dir}/bolt.so"
 
- if [ -f "/etc/php/${php_version}/mods-available/bolt.ini" ]; then
- echo "extension=bolt.so" | sudo tee "/etc/php/${php_version}/mods-available/bolt.ini" >/dev/null
- else
- for ini in "/etc/php/${php_version}/apache2/php.ini" "/etc/php/${php_version}/cli/php.ini"; do
- if [ -f "${ini}" ] && ! grep -q "extension=bolt.so" "${ini}"; then
- echo "extension=bolt.so" | sudo tee -a "${ini}" >/dev/null
- fi
- done
- fi
+ # Always create bolt.ini so both CLI and Apache can enable it
+ sudo mkdir -p "$(dirname "${ini_file}")"
+ echo "extension=bolt.so" | sudo tee "${ini_file}" >/dev/null
 
+ # Prefer phpenmod (creates conf.d symlinks for cli/apache2)
  if command -v phpenmod >/dev/null 2>&1; then
  sudo phpenmod -v "${php_version}" bolt 2>/dev/null || true
+ fi
+
+ # Fallback: ensure conf.d contains an ini that loads bolt for CLI/Apache
+ sudo mkdir -p "${cli_conf_dir}" "${apache_conf_dir}"
+ if [ ! -e "${cli_conf_dir}/99-bolt.ini" ]; then
+ sudo ln -sf "${ini_file}" "${cli_conf_dir}/99-bolt.ini" 2>/dev/null || true
+ fi
+ if [ ! -e "${apache_conf_dir}/99-bolt.ini" ]; then
+ sudo ln -sf "${ini_file}" "${apache_conf_dir}/99-bolt.ini" 2>/dev/null || true
  fi
 
  if ${php_bin} -m 2>/dev/null | grep -qi '^bolt$'; then
  echo -e "${GREEN}phpBolt verified for PHP ${php_version}.${NC}"
  else
  echo -e "${RED}Error: phpBolt is not loading for PHP ${php_version}. Check ${php_ext_dir}/bolt.so${NC}"
+ echo -e "${YELLOW}Tip: verify with '${php_bin} -m | grep -i bolt' and check '${cli_conf_dir}/99-bolt.ini'${NC}"
  exit 1
  fi
 }
