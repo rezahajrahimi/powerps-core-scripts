@@ -44,8 +44,20 @@ fi
 bolt_src="$(pick_bolt_source)" || {
  echo -e "${RED}Error: bolt.so not found in ${APP_DIR}${NC}" >&2
  ls -la "${APP_DIR}"/bolt*.so 2>/dev/null || true
+ echo -e "${YELLOW}Run: cd ${APP_DIR} && git fetch origin main && git reset --hard origin/main${NC}" >&2
  exit 1
 }
+
+echo -e "${GREEN}Found bolt binary: ${bolt_src} ($(file -b "${bolt_src}"))${NC}"
+
+# Test load before installing (shows PHP startup errors if binary is incompatible)
+if ! ${php_bin} -d "extension=${bolt_src}" -r 'exit(function_exists("bolt_decrypt")?0:1);' 2>/tmp/powerps-bolt-test.err; then
+ echo -e "${RED}Error: bolt binary cannot load in ${php_bin}.${NC}" >&2
+ cat /tmp/powerps-bolt-test.err >&2 || true
+ echo -e "${YELLOW}Check: ldd ${bolt_src}${NC}" >&2
+ exit 1
+fi
+rm -f /tmp/powerps-bolt-test.err
 
 php_ext_dir="$(${php_bin} -i 2>/dev/null | awk -F'=> ' '/^extension_dir/{print $2; exit}')"
 if [ -z "${php_ext_dir}" ]; then
@@ -77,7 +89,14 @@ sudo update-alternatives --set php "/usr/bin/${php_bin}" 2>/dev/null || true
 
 if ! ${php_bin} -m 2>/dev/null | grep -qi '^bolt$'; then
  echo -e "${RED}Error: ${php_bin} still does not load bolt.${NC}" >&2
- ${php_bin} -m 2>&1 | tail -10 || true
+ echo -e "${YELLOW}--- php --ini ---${NC}" >&2
+ ${php_bin} --ini 2>&1 | head -15 >&2 || true
+ echo -e "${YELLOW}--- conf.d/99-bolt.ini ---${NC}" >&2
+ cat "${cli_conf_dir}/99-bolt.ini" 2>&1 >&2 || true
+ echo -e "${YELLOW}--- extension file ---${NC}" >&2
+ ls -la "${php_ext_dir}/bolt.so" 2>&1 >&2 || true
+ echo -e "${YELLOW}--- direct load test ---${NC}" >&2
+ ${php_bin} -d "extension=${php_ext_dir}/bolt.so" -m 2>&1 | grep -i bolt >&2 || true
  exit 1
 fi
 
