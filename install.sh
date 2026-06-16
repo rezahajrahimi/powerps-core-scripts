@@ -254,33 +254,83 @@ SUBDOMAIN_FILE="${STATE_DIR}/subdomains.conf"
 sudo mkdir -p "${STATE_DIR}"
 sudo chown "$(whoami)":"$(whoami)" "${STATE_DIR}" 2>/dev/null || true
 
-# Check if the subdomains file exists
-if [ -f "$SUBDOMAIN_FILE" ]; then
- source "$SUBDOMAIN_FILE"
+# --- Detect existing install (subdomains.conf, legacy paths, Apache, .env) ---
+load_subdomains_from_file() {
+ local file="$1"
+ if [ ! -f "$file" ]; then
+ return 1
+ fi
+ # shellcheck disable=SC1090
+ source "$file"
+ if [ -n "${LARAVEL_SUBDOMAIN:-}" ] && [ -n "${HTML5_SUBDOMAIN:-}" ]; then
+ return 0
+ fi
+ return 1
+}
 
- # Ask user what they want to do
+persist_subdomains() {
+ echo "LARAVEL_SUBDOMAIN=$LARAVEL_SUBDOMAIN" | sudo tee "$SUBDOMAIN_FILE" >/dev/null
+ echo "HTML5_SUBDOMAIN=$HTML5_SUBDOMAIN" | sudo tee -a "$SUBDOMAIN_FILE" >/dev/null
+}
+
+detect_subdomains_from_apache() {
+ local core_conf="/etc/apache2/sites-available/powerps-core.conf"
+ local web_conf="/etc/apache2/sites-available/powerps-webapp.conf"
+ if [ -f "$core_conf" ]; then
+ LARAVEL_SUBDOMAIN=$(grep -E '^\s*ServerName\s+' "$core_conf" 2>/dev/null | awk '{print $2}' | head -1)
+ fi
+ if [ -f "$web_conf" ]; then
+ HTML5_SUBDOMAIN=$(grep -E '^\s*ServerName\s+' "$web_conf" 2>/dev/null | awk '{print $2}' | head -1)
+ fi
+}
+
+strip_url_host() {
+ local url="$1"
+ url="${url#https://}"
+ url="${url#http://}"
+ url="${url%%/*}"
+ echo "$url"
+}
+
+detect_subdomains_from_env() {
+ local env_file="/var/www/html/laravel-app/.env"
+ if [ ! -f "$env_file" ]; then
+ return 1
+ fi
+ local app_url front_url
+ app_url=$(grep -m1 '^APP_URL=' "$env_file" | cut -d= -f2- | tr -d '"' | tr -d "'")
+ front_url=$(grep -m1 '^FRONT_URL=' "$env_file" | cut -d= -f2- | tr -d '"' | tr -d "'")
+ if [ -n "$app_url" ]; then
+ LARAVEL_SUBDOMAIN=$(strip_url_host "$app_url")
+ fi
+ if [ -n "$front_url" ]; then
+ HTML5_SUBDOMAIN=$(strip_url_host "$front_url")
+ fi
+}
+
+powerps_is_installed() {
+ [ -d "/var/www/html/laravel-app/.git" ] || [ -d "/var/www/html/laravel-app" ]
+}
+
+show_powerps_menu() {
  echo -e "${YELLOW}Subdomains are already set (${LARAVEL_SUBDOMAIN}, ${HTML5_SUBDOMAIN}).${NC}"
  echo -e "${CYAN}Please choose an option:${NC}"
  echo "1) Install / Update"
  echo "2) Uninstall"
  echo "3) SSL Certificate (Certbot)"
- 
  while true; do
  read -p "Enter choice [1-3]: " choice
  case $choice in
  1)
  echo -e "${GREEN}Proceeding with Installation...${NC}"
- break
+ return 0
  ;;
  2)
  echo -e "${GREEN}Starting uninstallation process...${NC}"
  # 1. Stop running services
  echo -e "${GREEN}Stopping services...${NC}"
- # Stop Laravel processes
  sudo pkill -f artisan || true
  sudo pkill -f "php artisan" || true
- 
- # Stop and remove Laravel Queue Service
  if systemctl list-unit-files | grep -q '^laravel-queue\.service'; then
  echo -e "${GREEN}Stopping and removing Laravel Queue Service...${NC}"
  sudo systemctl stop laravel-queue || true
@@ -288,76 +338,53 @@ if [ -f "$SUBDOMAIN_FILE" ]; then
  sudo rm -f /etc/systemd/system/laravel-queue.service || true
  sudo systemctl daemon-reload || true
  fi
-
- # 2. Remove Laravel application
  echo -e "${GREEN}Removing Laravel application...${NC}"
+ DB_NAME_LOCAL=""
+ DB_USER_LOCAL=""
+ if [ -f "/var/www/html/laravel-app/.env" ]; then
+ DB_NAME_LOCAL=$(grep '^DB_DATABASE=' /var/www/html/laravel-app/.env | cut -d'=' -f2)
+ DB_USER_LOCAL=$(grep '^DB_USERNAME=' /var/www/html/laravel-app/.env | cut -d'=' -f2)
+ fi
  if [ -d "/var/www/html/laravel-app" ]; then
  backup_existing "/var/www/html/laravel-app"
  sudo rm -rf /var/www/html/laravel-app || true
  fi
-
- # 3. Remove WebApp
  echo -e "${GREEN}Removing WebApp...${NC}"
  if [ -d "/var/www/html/powerps-webapp" ]; then
  backup_existing "/var/www/html/powerps-webapp"
  sudo rm -rf /var/www/html/powerps-webapp || true
  fi
-
- # 4. Remove Database and User
  echo -e "${GREEN}Removing database and user...${NC}"
- # Try to get credentials from .env before deleting it
- if [ -f "/var/www/html/laravel-app/.env" ]; then
- DB_NAME_LOCAL=$(grep '^DB_DATABASE=' /var/www/html/laravel-app/.env | cut -d'=' -f2)
- DB_USER_LOCAL=$(grep '^DB_USERNAME=' /var/www/html/laravel-app/.env | cut -d'=' -f2)
- fi
  DB_NAME_LOCAL=${DB_NAME_LOCAL:-powerps_db}
  DB_USER_LOCAL=${DB_USER_LOCAL:-powerps_user}
-
  sudo mysql -e "DROP DATABASE IF EXISTS ${DB_NAME_LOCAL};" || true
  sudo mysql -e "DROP USER IF EXISTS '${DB_USER_LOCAL}'@'localhost';" || true
  sudo mysql -e "FLUSH PRIVILEGES;" || true
-
- # 5. Remove Apache Configurations
  echo -e "${GREEN}Removing Apache configurations...${NC}"
  if [ -f "/etc/apache2/sites-available/powerps-core.conf" ]; then
  sudo a2dissite powerps-core || true
  sudo rm -f /etc/apache2/sites-available/powerps-core.conf || true
  fi
-
  if [ -f "/etc/apache2/sites-available/powerps-webapp.conf" ]; then
  sudo a2dissite powerps-webapp || true
  sudo rm -f /etc/apache2/sites-available/powerps-webapp.conf || true
  fi
-
- # 6. Restart Apache
  echo -e "${GREEN}Restarting Apache...${NC}"
  sudo systemctl restart apache2 || true
-
- # 7. Remove PHPMyAdmin if exists
  if [ -d "/var/www/html/phpmyadmin" ]; then
  echo -e "${GREEN}Removing PHPMyAdmin...${NC}"
  sudo rm -rf /var/www/html/phpmyadmin || true
  fi
-
- # 8. Remove Cron Jobs
  echo -e "${GREEN}Removing cron jobs...${NC}"
  crontab -l 2>/dev/null | grep -v 'laravel-app' | grep -v 'powerps' | grep -v 'artisan' | crontab - || true
-
- # 9. Remove configuration file
  if [ -f "$SUBDOMAIN_FILE" ]; then
  rm -f "$SUBDOMAIN_FILE" || true
  fi
-
- # 10. Remove hosts entries
  if [ -n "${LARAVEL_SUBDOMAIN:-}" ] && [ -n "${HTML5_SUBDOMAIN:-}" ]; then
  sudo sed -i "/${LARAVEL_SUBDOMAIN}/d" /etc/hosts || true
  sudo sed -i "/${HTML5_SUBDOMAIN}/d" /etc/hosts || true
  fi
-
- # Remove queue logs
  sudo rm -f /var/log/laravel-queue.log /var/log/laravel-queue.error.log || true
-
- # Stop and remove Certbot timer/service
  if systemctl list-unit-files | grep -q '^certbot-renew\.timer'; then
  echo -e "${GREEN}Stopping and removing certbot renewal timer/service...${NC}"
  sudo systemctl stop certbot-renew.timer || true
@@ -365,8 +392,6 @@ if [ -f "$SUBDOMAIN_FILE" ]; then
  sudo rm -f /etc/systemd/system/certbot-renew.timer /etc/systemd/system/certbot-renew.service || true
  sudo systemctl daemon-reload || true
  fi
-
- # Optionally delete Let's Encrypt certs
  if command -v certbot >/dev/null 2>&1; then
  read -r -p "Also delete Let's Encrypt certs for ${LARAVEL_SUBDOMAIN} and ${HTML5_SUBDOMAIN}? (y/N): " DELCERTS
  if [[ "$DELCERTS" =~ ^[Yy]$ ]]; then
@@ -374,10 +399,7 @@ if [ -f "$SUBDOMAIN_FILE" ]; then
  sudo certbot delete --cert-name "${HTML5_SUBDOMAIN}" || true
  fi
  fi
-
- # Remove stored MySQL root password file
  sudo rm -f /root/.mysql_root_pass || true
-
  echo -e "${GREEN}Uninstallation completed successfully!${NC}"
  exit 0
  ;;
@@ -391,7 +413,9 @@ if [ -f "$SUBDOMAIN_FILE" ]; then
  ;;
  esac
  done
-else
+}
+
+prompt_for_subdomains() {
  while true; do
  read -e -p "Enter your Core subdomain (e.g., core.domain.com): " LARAVEL_SUBDOMAIN
  if [[ $LARAVEL_SUBDOMAIN =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$ ]]; then
@@ -400,7 +424,6 @@ else
  echo -e "${YELLOW}Invalid domain format. Please try again.${NC}"
  fi
  done
-
  while true; do
  read -e -p "Enter your WebApp subdomain (e.g., web.domain.com): " HTML5_SUBDOMAIN
  if [[ $HTML5_SUBDOMAIN =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$ ]]; then
@@ -409,10 +432,44 @@ else
  echo -e "${YELLOW}Invalid domain format. Please try again.${NC}"
  fi
  done
+ persist_subdomains
+}
 
- # Persist for next run (so menu shows up)
- echo "LARAVEL_SUBDOMAIN=$LARAVEL_SUBDOMAIN" | sudo tee "$SUBDOMAIN_FILE" >/dev/null
- echo "HTML5_SUBDOMAIN=$HTML5_SUBDOMAIN" | sudo tee -a "$SUBDOMAIN_FILE" >/dev/null
+LARAVEL_SUBDOMAIN=""
+HTML5_SUBDOMAIN=""
+
+if load_subdomains_from_file "$SUBDOMAIN_FILE"; then
+ :
+else
+ for legacy in "/root/subdomains.conf" "$HOME/subdomains.conf" "./subdomains.conf"; do
+ if load_subdomains_from_file "$legacy"; then
+ echo -e "${CYAN}Migrating subdomains from ${legacy} -> ${SUBDOMAIN_FILE}${NC}"
+ persist_subdomains
+ break
+ fi
+ done
+fi
+
+if { [ -z "${LARAVEL_SUBDOMAIN:-}" ] || [ -z "${HTML5_SUBDOMAIN:-}" ]; } && powerps_is_installed; then
+ detect_subdomains_from_apache
+ if [ -z "${LARAVEL_SUBDOMAIN:-}" ] || [ -z "${HTML5_SUBDOMAIN:-}" ]; then
+ detect_subdomains_from_env
+ fi
+ if [ -n "${LARAVEL_SUBDOMAIN:-}" ] && [ -n "${HTML5_SUBDOMAIN:-}" ]; then
+ persist_subdomains
+ echo -e "${CYAN}Detected existing install from server config (${LARAVEL_SUBDOMAIN}, ${HTML5_SUBDOMAIN})${NC}"
+ fi
+fi
+
+if [ -n "${LARAVEL_SUBDOMAIN:-}" ] && [ -n "${HTML5_SUBDOMAIN:-}" ]; then
+ show_powerps_menu
+elif powerps_is_installed; then
+ echo -e "${YELLOW}PowerPs is installed but subdomains were not found.${NC}"
+ echo -e "${YELLOW}Enter them once; they will be saved to ${SUBDOMAIN_FILE}${NC}"
+ prompt_for_subdomains
+ show_powerps_menu
+else
+ prompt_for_subdomains
 fi
 # Update package lists and install necessary packages
 echo -e "${GREEN}Updating package lists and installing necessary packages...${NC}"
@@ -774,16 +831,17 @@ fi
 
 # Set up Apache virtual host for Laravel
 echo -e "${GREEN}Setting up Apache virtual host for Laravel...${NC}"
-sudo bash -c "cat < /etc/apache2/sites-available/powerps-core.conf
- 
- ServerName ${LARAVEL_SUBDOMAIN}
- DocumentRoot /var/www/html/laravel-app/public
- 
- AllowOverride All
- 
- ErrorLog \${APACHE_LOG_DIR}/laravel-error.log
- CustomLog \${APACHE_LOG_DIR}/laravel-access.log combined
- 
+sudo bash -c "cat <<EOT > /etc/apache2/sites-available/powerps-core.conf
+<VirtualHost *:80>
+    ServerName ${LARAVEL_SUBDOMAIN}
+    DocumentRoot /var/www/html/laravel-app/public
+    <Directory /var/www/html/laravel-app/public>
+        AllowOverride All
+        Require all granted
+    </Directory>
+    ErrorLog \${APACHE_LOG_DIR}/laravel-error.log
+    CustomLog \${APACHE_LOG_DIR}/laravel-access.log combined
+</VirtualHost>
 EOT"
 
 # Check if the HTML5 project directory exists
@@ -811,18 +869,18 @@ sudo chmod 640 assets/.env || true
 
 # Set up Apache virtual host for HTML5 project
 echo -e "${GREEN}Setting up Apache virtual host for HTML5 project...${NC}"
-sudo bash -c "cat < /etc/apache2/sites-available/powerps-webapp.conf
- 
- ServerName ${HTML5_SUBDOMAIN}
- DocumentRoot /var/www/html/powerps-webapp
- 
- AllowOverride All
- Options Indexes FollowSymLinks
- Require all granted
- 
- ErrorLog \${APACHE_LOG_DIR}/html5-error.log
- CustomLog \${APACHE_LOG_DIR}/html5-access.log combined
- 
+sudo bash -c "cat <<EOT > /etc/apache2/sites-available/powerps-webapp.conf
+<VirtualHost *:80>
+    ServerName ${HTML5_SUBDOMAIN}
+    DocumentRoot /var/www/html/powerps-webapp
+    <Directory /var/www/html/powerps-webapp>
+        AllowOverride All
+        Options Indexes FollowSymLinks
+        Require all granted
+    </Directory>
+    ErrorLog \${APACHE_LOG_DIR}/html5-error.log
+    CustomLog \${APACHE_LOG_DIR}/html5-access.log combined
+</VirtualHost>
 EOT"
 
 # Enable Apache virtual hosts
