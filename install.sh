@@ -246,8 +246,13 @@ check_requirements() {
 }
 check_requirements
 
-# File to store subdomains
-SUBDOMAIN_FILE="subdomains.conf"
+# Persisted state directory (do NOT depend on current working directory)
+STATE_DIR="/var/lib/powerps"
+SUBDOMAIN_FILE="${STATE_DIR}/subdomains.conf"
+
+# Ensure state dir exists (works for sudo bash -c ...)
+sudo mkdir -p "${STATE_DIR}"
+sudo chown "$(whoami)":"$(whoami)" "${STATE_DIR}" 2>/dev/null || true
 
 # Check if the subdomains file exists
 if [ -f "$SUBDOMAIN_FILE" ]; then
@@ -405,8 +410,9 @@ else
  fi
  done
 
- echo "LARAVEL_SUBDOMAIN=$LARAVEL_SUBDOMAIN" > "$SUBDOMAIN_FILE"
- echo "HTML5_SUBDOMAIN=$HTML5_SUBDOMAIN" >> "$SUBDOMAIN_FILE"
+ # Persist for next run (so menu shows up)
+ echo "LARAVEL_SUBDOMAIN=$LARAVEL_SUBDOMAIN" | sudo tee "$SUBDOMAIN_FILE" >/dev/null
+ echo "HTML5_SUBDOMAIN=$HTML5_SUBDOMAIN" | sudo tee -a "$SUBDOMAIN_FILE" >/dev/null
 fi
 # Update package lists and install necessary packages
 echo -e "${GREEN}Updating package lists and installing necessary packages...${NC}"
