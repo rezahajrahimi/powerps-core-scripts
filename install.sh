@@ -143,6 +143,11 @@ configure_bolt() {
  exit 1
  fi
 
+ if ! ${php_bin} -d "extension=${bolt_src}" -r 'exit(function_exists("bolt_decrypt")?0:1);' 2>/dev/null; then
+ echo -e "${RED}Error: bolt binary is incompatible with ${php_bin}.${NC}"
+ exit 1
+ fi
+
  php_ext_dir="$(${php_bin} -i 2>/dev/null | awk -F'=> ' '/^extension_dir/{print $2; exit}')"
  if [ -z "${php_ext_dir}" ]; then
  case "${php_version}" in
@@ -203,6 +208,18 @@ ensure_php_default() {
  exit 1
  fi
  echo -e "${GREEN}Default php is ${php_bin} with phpBolt loaded.${NC}"
+}
+
+# Re-configure phpBolt if missing (e.g. partial install or PHP package refresh)
+verify_bolt_or_configure() {
+ local php_version="$1"
+ local php_bin="php${php_version}"
+ if ${php_bin} -m 2>/dev/null | grep -qi '^bolt$'; then
+ return 0
+ fi
+ echo -e "${YELLOW}phpBolt not loaded; configuring now...${NC}"
+ configure_bolt "${php_version}"
+ ensure_php_default "${php_version}"
 }
 
 # run command with retries
@@ -830,6 +847,10 @@ fi
 # Secure .env file: restrict permissions and owner
 sudo chown www-data:www-data /var/www/html/laravel-app/.env || true
 sudo chmod 600 /var/www/html/laravel-app/.env || true
+
+# Ensure phpBolt is loaded before any artisan command (encrypted source)
+verify_bolt_or_configure "${PHP_VERSION}"
+
 # Generate app key
 echo -e "${GREEN}Generating app key...${NC}"
 php${PHP_VERSION} artisan key:generate
