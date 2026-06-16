@@ -130,11 +130,17 @@ configure_bolt() {
  local ini_file="/etc/php/${php_version}/mods-available/bolt.ini"
  local cli_conf_dir="/etc/php/${php_version}/cli/conf.d"
  local apache_conf_dir="/etc/php/${php_version}/apache2/conf.d"
+ local bolt_ini_line
+
+ if ! command -v "${php_bin}" >/dev/null 2>&1; then
+ echo -e "${RED}Error: ${php_bin} is not installed.${NC}"
+ exit 1
+ fi
 
  bolt_src="$(pick_bolt_source)"
  if [ -z "${bolt_src}" ] || [ ! -f "${bolt_src}" ]; then
- echo -e "${YELLOW}Warning: bolt.so not found in laravel-app directory${NC}"
- return 0
+ echo -e "${RED}Error: bolt.so not found in /var/www/html/laravel-app (bolt.so, bolt-x86_64.so, bolt-aarch64.so).${NC}"
+ exit 1
  fi
 
  php_ext_dir="$(${php_bin} -i 2>/dev/null | awk -F'=> ' '/^extension_dir/{print $2; exit}')"
@@ -150,32 +156,53 @@ configure_bolt() {
  echo -e "${CYAN}phpBolt is bundled in powerps-core repo (not downloaded separately).${NC}"
  sudo mkdir -p "${php_ext_dir}"
  sudo cp "${bolt_src}" "${php_ext_dir}/bolt.so"
+ sudo chmod 644 "${php_ext_dir}/bolt.so"
 
- # Always create bolt.ini so both CLI and Apache can enable it
+ bolt_ini_line="extension=${php_ext_dir}/bolt.so"
+
+ # mods-available + phpenmod
  sudo mkdir -p "$(dirname "${ini_file}")"
- echo "extension=bolt.so" | sudo tee "${ini_file}" >/dev/null
-
- # Prefer phpenmod (creates conf.d symlinks for cli/apache2)
+ echo "${bolt_ini_line}" | sudo tee "${ini_file}" >/dev/null
  if command -v phpenmod >/dev/null 2>&1; then
  sudo phpenmod -v "${php_version}" bolt 2>/dev/null || true
  fi
 
- # Fallback: ensure conf.d contains an ini that loads bolt for CLI/Apache
+ # Always write conf.d directly (absolute path) for CLI and Apache
  sudo mkdir -p "${cli_conf_dir}" "${apache_conf_dir}"
- if [ ! -e "${cli_conf_dir}/99-bolt.ini" ]; then
- sudo ln -sf "${ini_file}" "${cli_conf_dir}/99-bolt.ini" 2>/dev/null || true
- fi
- if [ ! -e "${apache_conf_dir}/99-bolt.ini" ]; then
- sudo ln -sf "${ini_file}" "${apache_conf_dir}/99-bolt.ini" 2>/dev/null || true
- fi
+ echo "${bolt_ini_line}" | sudo tee "${cli_conf_dir}/99-bolt.ini" >/dev/null
+ echo "${bolt_ini_line}" | sudo tee "${apache_conf_dir}/99-bolt.ini" >/dev/null
 
- if ${php_bin} -m 2>/dev/null | grep -qi '^bolt$'; then
- echo -e "${GREEN}phpBolt verified for PHP ${php_version}.${NC}"
- else
- echo -e "${RED}Error: phpBolt is not loading for PHP ${php_version}. Check ${php_ext_dir}/bolt.so${NC}"
- echo -e "${YELLOW}Tip: verify with '${php_bin} -m | grep -i bolt' and check '${cli_conf_dir}/99-bolt.ini'${NC}"
+ if ! ${php_bin} -m 2>/dev/null | grep -qi '^bolt$'; then
+ echo -e "${RED}Error: phpBolt is not loading for ${php_bin}.${NC}"
+ echo -e "${YELLOW}Debug:${NC}"
+ ${php_bin} -m 2>&1 | tail -5 || true
+ ${php_bin} --ini 2>&1 | head -10 || true
+ ls -la "${php_ext_dir}/bolt.so" 2>/dev/null || true
  exit 1
  fi
+ echo -e "${GREEN}phpBolt verified for ${php_bin}.${NC}"
+}
+
+# Make the PowerPs PHP version the default `php` binary (artisan uses /usr/bin/env php)
+ensure_php_default() {
+ local php_version="$1"
+ local php_bin="/usr/bin/php${php_version}"
+
+ if [ ! -x "${php_bin}" ]; then
+ echo -e "${RED}Error: ${php_bin} not found.${NC}"
+ exit 1
+ fi
+
+ sudo update-alternatives --install /usr/bin/php php "${php_bin}" 100 2>/dev/null || true
+ sudo update-alternatives --set php "${php_bin}" 2>/dev/null || true
+
+ if ! php -m 2>/dev/null | grep -qi '^bolt$'; then
+ echo -e "${RED}Error: default 'php' does not load phpBolt.${NC}"
+ echo -e "${YELLOW}Current php: $(php -v 2>/dev/null | head -1)${NC}"
+ echo -e "${YELLOW}Use: ${php_bin} artisan migrate --force${NC}"
+ exit 1
+ fi
+ echo -e "${GREEN}Default php is ${php_bin} with phpBolt loaded.${NC}"
 }
 
 # run command with retries
@@ -676,6 +703,7 @@ sudo a2enmod "php${PHP_VERSION}" || true
 
 # Configure Bolt extension
 configure_bolt "${PHP_VERSION}"
+ensure_php_default "${PHP_VERSION}"
 
 # تنظیم مجوزها در هر دو حالت نصب اولیه و نصب مجدد
 echo -e "${GREEN}Setting permissions for Laravel directories...${NC}"

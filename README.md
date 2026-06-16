@@ -46,6 +46,25 @@ sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rezahajrahimi/powerps
 
 همان دستور نصب را دوباره اجرا کنید و گزینه **Install / Update** را بزنید. اسکریپت `git pull` می‌زند و PHP/phpBolt را با نسخه جدید ریپو هماهنگ می‌کند.
 
+## خطای `bolt_decrypt()` در migrate
+
+اگر `php artisan migrate` خطای `Call to undefined function bolt_decrypt()` داد، یعنی **phpBolt برای PHP CLI لود نشده** یا دستور `php` به نسخه اشتباه اشاره می‌کند.
+
+```sh
+# تشخیص
+php -v
+php8.4 -m | grep -i bolt
+
+# تعمیر سریع
+sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rezahajrahimi/powerps-core-scripts/refs/heads/main/fix-phpbolt.sh)"
+
+# migrate
+cd /var/www/html/laravel-app
+php artisan migrate --force
+```
+
+اگر `php -m | grep bolt` خالی بود ولی `php8.4 -m | grep bolt` کار کرد، از `php8.4 artisan migrate --force` استفاده کنید.
+
 ## English
 
 Automated installer for PowerPs Core (Laravel backend) and PowerPs WebApp.
