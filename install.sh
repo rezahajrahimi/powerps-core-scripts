@@ -45,6 +45,44 @@ backup_existing() {
  fi
 }
 
+# Update existing powerps-core checkout without failing on server-side file drift
+update_powerps_core_repo() {
+ local app_dir="/var/www/html/laravel-app"
+ local backup_dir="/tmp/powerps-core-update-$(date +%Y%m%d%H%M%S)"
+
+ echo -e "${GREEN}Updating the Laravel project repository...${NC}"
+ mkdir -p "${backup_dir}"
+
+ if [ -f "${app_dir}/.env" ]; then
+ cp "${app_dir}/.env" "${backup_dir}/.env"
+ fi
+ if [ -d "${app_dir}/public/images/qrcodes" ]; then
+ cp -a "${app_dir}/public/images/qrcodes" "${backup_dir}/"
+ fi
+ if [ -d "${app_dir}/public/images/transaction_images" ]; then
+ cp -a "${app_dir}/public/images/transaction_images" "${backup_dir}/"
+ fi
+
+ cd "${app_dir}"
+ git fetch origin main
+ git reset --hard origin/main
+
+ if [ -f "${backup_dir}/.env" ]; then
+ cp "${backup_dir}/.env" "${app_dir}/.env"
+ fi
+ if [ -d "${backup_dir}/qrcodes" ]; then
+ mkdir -p "${app_dir}/public/images/qrcodes"
+ cp -a "${backup_dir}/qrcodes/." "${app_dir}/public/images/qrcodes/"
+ fi
+ if [ -d "${backup_dir}/transaction_images" ]; then
+ mkdir -p "${app_dir}/public/images/transaction_images"
+ cp -a "${backup_dir}/transaction_images/." "${app_dir}/public/images/transaction_images/"
+ fi
+
+ rm -rf "${backup_dir}"
+ echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: powerps-core updated to origin/main" | sudo tee -a /var/log/powerps_install.log >/dev/null
+}
+
 # Detect required PHP version from powerps-core release metadata
 detect_php_version() {
  local version_file="/var/www/html/laravel-app/.powerps-php-version"
@@ -534,11 +572,9 @@ sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';
 sudo mysql -e "FLUSH PRIVILEGES;" || check_command "Failed to flush privileges"
 
 # Check if the Laravel project directory exists
-if [ -d "/var/www/html/laravel-app" ]; then
- # If it exists, update the repository
- echo -e "${GREEN}Updating the Laravel project repository...${NC}"
+if [ -d "/var/www/html/laravel-app/.git" ]; then
+ update_powerps_core_repo
  cd /var/www/html/laravel-app
- git pull origin main
 else
  # Clone the Laravel project repository
  echo -e "${GREEN}Cloning Laravel project repository...${NC}"
