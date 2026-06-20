@@ -15,6 +15,7 @@ sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rezahajrahimi/powerps
 3. **phpBolt** را از فایل‌های داخل همان ریپو فعال می‌کند
 4. Composer، migrate، cron، queue worker و SSL را راه‌اندازی می‌کند
 5. [powerps-webapp](https://github.com/rezahajrahimi/powerps-webapp) را نصب می‌کند
+6. اگر **Bot Token** یا **Admin ID** در `.env` خالی باشد، از شما می‌پرسد (نصب اولیه و به‌روزرسانی)
 
 ## bolt.so از کجا می‌آید؟
 
@@ -45,6 +46,22 @@ sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rezahajrahimi/powerps
 ## به‌روزرسانی
 
 همان دستور نصب را دوباره اجرا کنید و گزینه **Install / Update** را بزنید. اسکریپت `git pull` می‌زند و PHP/phpBolt را با نسخه جدید ریپو هماهنگ می‌کند.
+
+## تنظیم دستی Bot Token و Admin ID
+
+اگر نصب بدون پرسیدن توکن تمام شد، مقادیر را در `.env` بگذارید و دوباره install را اجرا کنید (یا webhook را دستی ست کنید):
+
+```sh
+nano /var/www/html/laravel-app/.env
+# TELEGRAM_BOT_TOKEN=bot123456789:ABC...
+# TELEGRAM_ADMIN_ID=123456789
+
+cd /var/www/html/laravel-app
+php artisan config:clear
+curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<core-subdomain>/api/telegram/webhooks/inbound"
+```
+
+توکن را می‌توانید همان‌طور که @BotFather می‌دهد (بدون پیشوند `bot`) وارد کنید؛ اسکریپت نصب پیشوند را خودش اضافه می‌کند.
 
 ## خطای `bolt_decrypt()` در migrate
 

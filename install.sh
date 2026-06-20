@@ -83,6 +83,128 @@ update_powerps_core_repo() {
  echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: powerps-core updated to origin/main" | sudo tee -a /var/log/powerps_install.log >/dev/null
 }
 
+LARAVEL_ENV_FILE="/var/www/html/laravel-app/.env"
+
+read_env_value() {
+ local key="$1"
+ if [ ! -f "${LARAVEL_ENV_FILE}" ]; then
+ return 0
+ fi
+ grep -m1 "^${key}=" "${LARAVEL_ENV_FILE}" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d '[:space:]'
+}
+
+set_env_value() {
+ local key="$1"
+ local value="$2"
+ sed -i "/^${key}=/d" "${LARAVEL_ENV_FILE}"
+ echo "${key}=${value}" >> "${LARAVEL_ENV_FILE}"
+}
+
+normalize_telegram_token() {
+ local token="$1"
+ token="${token#"${token%%[![:space:]]*}"}"
+ token="${token%"${token##*[![:space:]]}"}"
+ if [[ "${token}" =~ ^bot[0-9]+:[A-Za-z0-9_-]+$ ]]; then
+ echo "${token}"
+ elif [[ "${token}" =~ ^[0-9]+:[A-Za-z0-9_-]+$ ]]; then
+ echo "bot${token}"
+ else
+ echo "${token}"
+ fi
+}
+
+valid_telegram_token() {
+ local token="$1"
+ [[ "${token}" =~ ^bot[0-9]{8,}:[A-Za-z0-9_-]{35,}$ ]]
+}
+
+prompt_telegram_config() {
+ local existing_token existing_admin
+
+ existing_token="$(read_env_value TELEGRAM_BOT_TOKEN || true)"
+ existing_admin="$(read_env_value TELEGRAM_ADMIN_ID || true)"
+
+ if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${existing_token:-}" ]; then
+ TELEGRAM_BOT_TOKEN="${existing_token}"
+ fi
+ if [ -z "${TELEGRAM_ADMIN_ID:-}" ] && [ -n "${existing_admin:-}" ]; then
+ TELEGRAM_ADMIN_ID="${existing_admin}"
+ fi
+
+ if valid_telegram_token "${TELEGRAM_BOT_TOKEN:-}" && [[ "${TELEGRAM_ADMIN_ID:-}" =~ ^[0-9]{6,}$ ]]; then
+ echo -e "${GREEN}Telegram bot token and admin ID already configured.${NC}"
+ set_env_value TELEGRAM_BOT_TOKEN "${TELEGRAM_BOT_TOKEN}"
+ set_env_value TELEGRAM_ADMIN_ID "${TELEGRAM_ADMIN_ID}"
+ set_env_value TELEGRAM_API_ENDPOINT "https://api.telegram.org"
+ return 0
+ fi
+
+ echo ""
+ echo -e "${CYAN}======== Telegram Bot Configuration ========${NC}"
+ echo -e "${CYAN}Enter your bot token from @BotFather and your Telegram user ID.${NC}"
+ echo ""
+
+ while true; do
+ read -e -p "Enter your Bot token (e.g. 123456789:ABC... or bot123456789:ABC...): " TELEGRAM_BOT_TOKEN
+ TELEGRAM_BOT_TOKEN="$(normalize_telegram_token "${TELEGRAM_BOT_TOKEN}")"
+ if valid_telegram_token "${TELEGRAM_BOT_TOKEN}"; then
+ break
+ fi
+ echo -e "${YELLOW}Invalid bot token format. Copy the token from @BotFather (with or without the bot prefix).${NC}"
+ done
+ set_env_value TELEGRAM_BOT_TOKEN "${TELEGRAM_BOT_TOKEN}"
+
+ while true; do
+ read -e -p "Enter your Bot admin ID (e.g., 123456789): " TELEGRAM_ADMIN_ID
+ if [[ "${TELEGRAM_ADMIN_ID}" =~ ^[0-9]{6,}$ ]]; then
+ break
+ fi
+ echo -e "${YELLOW}Invalid admin ID format. It should be a number with at least 6 digits.${NC}"
+ done
+ set_env_value TELEGRAM_ADMIN_ID "${TELEGRAM_ADMIN_ID}"
+ set_env_value TELEGRAM_API_ENDPOINT "https://api.telegram.org"
+ echo ""
+}
+
+ensure_laravel_env_file() {
+ if [ -f "${LARAVEL_ENV_FILE}" ]; then
+ return 0
+ fi
+
+ if [ -f "/var/www/html/laravel-app/.env.example" ]; then
+ cp /var/www/html/laravel-app/.env.example "${LARAVEL_ENV_FILE}"
+ else
+ cat > "${LARAVEL_ENV_FILE}" <<'EOF'
+APP_NAME=Laravel
+APP_ENV=production
+APP_KEY=
+APP_DEBUG=true
+APP_URL=
+FRONT_URL=
+LICENSE_CHECK_URL=http://127.0.0.1
+LOG_CHANNEL=stack
+LOG_LEVEL=debug
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=
+DB_USERNAME=
+DB_PASSWORD=
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_API_ENDPOINT=https://api.telegram.org
+TELEGRAM_ADMIN_ID=
+ZARINPAL_MERCHANT_ID=
+NOWPAYMENTS_API_KEY=
+BROADCAST_DRIVER=log
+CACHE_DRIVER=file
+FILESYSTEM_DISK=local
+QUEUE_CONNECTION=sync
+SESSION_DRIVER=file
+SESSION_LIFETIME=120
+EOF
+ fi
+}
+
 # Detect required PHP version from powerps-core release metadata
 detect_php_version() {
  local version_file="/var/www/html/laravel-app/.powerps-php-version"
@@ -752,98 +874,60 @@ run_with_retry "php${PHP_VERSION} /usr/bin/composer install --no-interaction --n
 
 # Set up environment variables if not already set
 echo -e "${GREEN}Setting up environment variables...${NC}"
-if [ ! -f "/var/www/html/laravel-app/.env" ]; then
- cp /var/www/html/laravel-app/.env.example /var/www/html/laravel-app/.env
- sed -i '/APP_NAME/d' /var/www/html/laravel-app/.env
- echo "APP_NAME=Laravel" >> /var/www/html/laravel-app/.env
+ensure_laravel_env_file
 
- # check if APP_ENV is already set remove it and add it again
- sed -i '/APP_ENV/d' /var/www/html/laravel-app/.env
- echo "APP_ENV=production" >> /var/www/html/laravel-app/.env
- sed -i '/APP_KEY/d' /var/www/html/laravel-app/.env
- echo "APP_KEY=" >> /var/www/html/laravel-app/.env
+if [ ! -s "${LARAVEL_ENV_FILE}" ] || ! grep -q '^APP_NAME=' "${LARAVEL_ENV_FILE}"; then
+ echo -e "${YELLOW}Warning: .env was missing or incomplete; recreating base settings.${NC}"
+ ensure_laravel_env_file
+fi
 
- sed -i '/APP_DEBUG/d' /var/www/html/laravel-app/.env
- echo "APP_DEBUG=true" >> /var/www/html/laravel-app/.env
+set_env_value APP_NAME "Laravel"
+set_env_value APP_ENV "production"
+if ! grep -q '^APP_KEY=.\+' "${LARAVEL_ENV_FILE}"; then
+ set_env_value APP_KEY ""
+fi
+set_env_value APP_DEBUG "true"
+set_env_value APP_URL "https://${LARAVEL_SUBDOMAIN}"
+set_env_value FRONT_URL "https://${HTML5_SUBDOMAIN}"
+set_env_value DB_CONNECTION "mysql"
+set_env_value DB_HOST "127.0.0.1"
+set_env_value DB_PORT "3306"
+set_env_value DB_DATABASE "${DB_NAME}"
+set_env_value DB_USERNAME "${DB_USER}"
+set_env_value DB_PASSWORD "${DB_PASS}"
 
- sed -i '/APP_URL/d' /var/www/html/laravel-app/.env
- echo "APP_URL=https://${LARAVEL_SUBDOMAIN}" >> /var/www/html/laravel-app/.env
- echo "FRONT_URL=https://${HTML5_SUBDOMAIN}" >> /var/www/html/laravel-app/.env
+prompt_telegram_config
 
- sed -i '/DB_CONNECTION/d' /var/www/html/laravel-app/.env
- echo "DB_CONNECTION=mysql" >> /var/www/html/laravel-app/.env
- sed -i '/DB_HOST/d' /var/www/html/laravel-app/.env
- echo "DB_HOST=127.0.0.1" >> /var/www/html/laravel-app/.env
- sed -i '/DB_PORT/d' /var/www/html/laravel-app/.env
- echo "DB_PORT=3306" >> /var/www/html/laravel-app/.env
- sed -i '/DB_DATABASE/d' /var/www/html/laravel-app/.env
- sed -i '/DB_USERNAME/d' /var/www/html/laravel-app/.env
- sed -i '/DB_PASSWORD/d' /var/www/html/laravel-app/.env
- echo "DB_DATABASE=${DB_NAME}" >> /var/www/html/laravel-app/.env
- echo "DB_USERNAME=${DB_USER}" >> /var/www/html/laravel-app/.env
- echo "DB_PASSWORD=${DB_PASS}" >> /var/www/html/laravel-app/.env
- # read & set telegram token
- # Telegram Bot Token validation
- while true; do
- read -e -p "Enter your Bot token (e.g., botxxxxxxxxxxxxxxx): " TELEGRAM_BOT_TOKEN
- if [[ $TELEGRAM_BOT_TOKEN =~ ^bot[0-9]{8,}:[A-Za-z0-9_-]{35,}$ ]]; then
- break
- else
- echo -e "${YELLOW}Invalid bot token format. It should start with 'bot' followed by numbers and characters.${NC}"
- fi
- done
- sed -i '/TELEGRAM_BOT_TOKEN/d' /var/www/html/laravel-app/.env
- echo "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}" >> /var/www/html/laravel-app/.env
-
- # Telegram Admin ID validation
- while true; do
- read -e -p "Enter your Bot admin ID (e.g., 123456789): " TELEGRAM_ADMIN_ID
- if [[ $TELEGRAM_ADMIN_ID =~ ^[0-9]{6,}$ ]]; then
- break
- else
- echo -e "${YELLOW}Invalid admin ID format. It should be a number with at least 6 digits.${NC}"
- fi
- done
- sed -i '/TELEGRAM_ADMIN_ID/d' /var/www/html/laravel-app/.env
- echo "TELEGRAM_ADMIN_ID=${TELEGRAM_ADMIN_ID}" >> /var/www/html/laravel-app/.env
-
- # Set Telegram API endpoint
- sed -i '/TELEGRAM_API_ENDPOINT/d' /var/www/html/laravel-app/.env
- echo "TELEGRAM_API_ENDPOINT=https://api.telegram.org" >> /var/www/html/laravel-app/.env
-
- # Optional Zarinpal Merchant ID
+existing_zarinpal="$(read_env_value ZARINPAL_MERCHANT_ID || true)"
+if [ -z "${existing_zarinpal:-}" ]; then
  read -e -p "Enter your Zarinpal Merchant ID (optional, press Enter to skip): " ZARINPAL_MERCHANT_ID
  if [ ! -z "$ZARINPAL_MERCHANT_ID" ]; then
  if [[ $ZARINPAL_MERCHANT_ID =~ ^[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$ ]]; then
- sed -i '/ZARINPAL_MERCHANT_ID/d' /var/www/html/laravel-app/.env
- echo "ZARINPAL_MERCHANT_ID=${ZARINPAL_MERCHANT_ID}" >> /var/www/html/laravel-app/.env
+ set_env_value ZARINPAL_MERCHANT_ID "${ZARINPAL_MERCHANT_ID}"
  else
  echo -e "${YELLOW}Invalid Zarinpal Merchant ID format. Setting empty value.${NC}"
- sed -i '/ZARINPAL_MERCHANT_ID/d' /var/www/html/laravel-app/.env
- echo "ZARINPAL_MERCHANT_ID=" >> /var/www/html/laravel-app/.env
+ set_env_value ZARINPAL_MERCHANT_ID ""
  fi
  else
- sed -i '/ZARINPAL_MERCHANT_ID/d' /var/www/html/laravel-app/.env
- echo "ZARINPAL_MERCHANT_ID=" >> /var/www/html/laravel-app/.env
+ set_env_value ZARINPAL_MERCHANT_ID ""
  fi
+fi
 
- # Optional NOWPayments API Key
+existing_nowpayments="$(read_env_value NOWPAYMENTS_API_KEY || true)"
+if [ -z "${existing_nowpayments:-}" ]; then
  read -e -p "Enter your NOWPAYMENTS API KEY (optional, press Enter to skip): " NOWPAYMENTS_API_KEY
  if [ ! -z "$NOWPAYMENTS_API_KEY" ]; then
  if [[ $NOWPAYMENTS_API_KEY =~ ^[A-Za-z0-9-]{36}$ ]]; then
- sed -i '/NOWPAYMENTS_API_KEY/d' /var/www/html/laravel-app/.env
- echo "NOWPAYMENTS_API_KEY=${NOWPAYMENTS_API_KEY}" >> /var/www/html/laravel-app/.env
+ set_env_value NOWPAYMENTS_API_KEY "${NOWPAYMENTS_API_KEY}"
  else
  echo -e "${YELLOW}Invalid NOWPayments API key format. Setting empty value.${NC}"
- sed -i '/NOWPAYMENTS_API_KEY/d' /var/www/html/laravel-app/.env
- echo "NOWPAYMENTS_API_KEY=" >> /var/www/html/laravel-app/.env
+ set_env_value NOWPAYMENTS_API_KEY ""
  fi
  else
- sed -i '/NOWPAYMENTS_API_KEY/d' /var/www/html/laravel-app/.env
- echo "NOWPAYMENTS_API_KEY=" >> /var/www/html/laravel-app/.env
+ set_env_value NOWPAYMENTS_API_KEY ""
  fi
-
 fi
+
 # Secure .env file: restrict permissions and owner
 sudo chown www-data:www-data /var/www/html/laravel-app/.env || true
 sudo chmod 600 /var/www/html/laravel-app/.env || true
@@ -851,9 +935,13 @@ sudo chmod 600 /var/www/html/laravel-app/.env || true
 # Ensure phpBolt is loaded before any artisan command (encrypted source)
 verify_bolt_or_configure "${PHP_VERSION}"
 
-# Generate app key
-echo -e "${GREEN}Generating app key...${NC}"
-php${PHP_VERSION} artisan key:generate
+# Generate app key (first install only; --force required in production when APP_KEY is empty)
+if grep -qE '^APP_KEY=base64:.+' "${LARAVEL_ENV_FILE}"; then
+ echo -e "${GREEN}APP_KEY already set; skipping key generation.${NC}"
+else
+ echo -e "${GREEN}Generating app key...${NC}"
+ php${PHP_VERSION} artisan key:generate --force
+fi
 
 # Run migrations
 echo -e "${GREEN}Running migrations...${NC}"
@@ -965,6 +1053,12 @@ echo -e "${CYAN}==============================${NC}"
 
 # Set Telegram Webhook
 echo -e "${GREEN}Setting up Telegram webhook...${NC}"
+if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
+ TELEGRAM_BOT_TOKEN="$(read_env_value TELEGRAM_BOT_TOKEN || true)"
+fi
+if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
+ echo -e "${YELLOW}Warning: Telegram bot token is not set. Skipping webhook setup.${NC}"
+else
 WEBHOOK_URL="https://${LARAVEL_SUBDOMAIN}/api/telegram/webhooks/inbound"
 TELEGRAM_API="https://api.telegram.org/${TELEGRAM_BOT_TOKEN}/setWebhook?url=${WEBHOOK_URL}"
 
@@ -980,6 +1074,7 @@ else
  echo -e "${YELLOW}Warning: Failed to set Telegram webhook. You can set it manually.${NC}"
  echo -e "${YELLOW}Masked bot token: ${masked_token}${NC}"
  echo -e "${YELLOW}Run: curl -F \"url=${WEBHOOK_URL}\" https://api.telegram.org/bot /setWebhook${NC}"
+fi
 fi
 
 echo -e "${GREEN}PowerPs installation complete!${NC}"
