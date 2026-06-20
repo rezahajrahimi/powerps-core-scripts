@@ -93,6 +93,11 @@ echo "${bolt_ini_line}" | sudo tee "${apache_conf_dir}/99-bolt.ini" >/dev/null
 
 sudo update-alternatives --install /usr/bin/php php "/usr/bin/${php_bin}" 100 2>/dev/null || true
 sudo update-alternatives --set php "/usr/bin/${php_bin}" 2>/dev/null || true
+sudo ln -sfn "/usr/bin/${php_bin}" /usr/bin/php 2>/dev/null || true
+if [ -e /usr/local/bin/php ]; then
+ sudo ln -sfn "/usr/bin/${php_bin}" /usr/local/bin/php 2>/dev/null || true
+fi
+hash -r 2>/dev/null || true
 
 if ! ${php_bin} -m 2>/dev/null | grep -qi '^bolt$'; then
  echo -e "${RED}Error: ${php_bin} still does not load bolt.${NC}" >&2

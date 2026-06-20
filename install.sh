@@ -411,22 +411,50 @@ configure_bolt() {
 ensure_php_default() {
  local php_version="$1"
  local php_bin="/usr/bin/php${php_version}"
+ local default_php_path default_php_real php_bin_real
 
  if [ ! -x "${php_bin}" ]; then
  echo -e "${RED}Error: ${php_bin} not found.${NC}"
  exit 1
  fi
 
- sudo update-alternatives --install /usr/bin/php php "${php_bin}" 100 2>/dev/null || true
- sudo update-alternatives --set php "${php_bin}" 2>/dev/null || true
-
- if ! php -m 2>/dev/null | grep -qi '^bolt$'; then
- echo -e "${RED}Error: default 'php' does not load phpBolt.${NC}"
- echo -e "${YELLOW}Current php: $(php -v 2>/dev/null | head -1)${NC}"
- echo -e "${YELLOW}Use: ${php_bin} artisan migrate --force${NC}"
+ if ! "${php_bin}" -m 2>/dev/null | grep -qi '^bolt$'; then
+ echo -e "${RED}Error: ${php_bin} does not load phpBolt.${NC}"
  exit 1
  fi
+
+ sudo update-alternatives --install /usr/bin/php php "${php_bin}" 100 2>/dev/null || true
+ sudo update-alternatives --set php "${php_bin}" 2>/dev/null || true
+ sudo ln -sfn "${php_bin}" /usr/bin/php 2>/dev/null || true
+
+ php_bin_real="$(readlink -f "${php_bin}")"
+ default_php_path="$(command -v php 2>/dev/null || true)"
+ default_php_real=""
+ if [ -n "${default_php_path}" ]; then
+ default_php_real="$(readlink -f "${default_php_path}" 2>/dev/null || true)"
+ fi
+
+ if [ -n "${default_php_real}" ] && [ "${default_php_real}" != "${php_bin_real}" ]; then
+ echo -e "${YELLOW}Default php (${default_php_path}) differs from ${php_bin}; fixing symlinks...${NC}"
+ if [ "${default_php_path}" = "/usr/local/bin/php" ] || [ "${default_php_path#"/usr/local/"}" != "${default_php_path}" ]; then
+ sudo ln -sfn "${php_bin}" /usr/local/bin/php 2>/dev/null || true
+ fi
+ sudo ln -sfn "${php_bin}" /usr/bin/php 2>/dev/null || true
+ hash -r 2>/dev/null || true
+ default_php_path="$(command -v php 2>/dev/null || true)"
+ default_php_real="$(readlink -f "${default_php_path}" 2>/dev/null || true)"
+ fi
+
+ if [ -n "${default_php_real}" ] && [ "${default_php_real}" = "${php_bin_real}" ] && php -m 2>/dev/null | grep -qi '^bolt$'; then
  echo -e "${GREEN}Default php is ${php_bin} with phpBolt loaded.${NC}"
+ return 0
+ fi
+
+ echo -e "${YELLOW}Warning: generic 'php' command may not load phpBolt, but ${php_bin} is OK.${NC}"
+ echo -e "${YELLOW}Install will continue using ${php_bin} for artisan/composer.${NC}"
+ if [ -n "${default_php_path}" ]; then
+ echo -e "${YELLOW}Current php: $(php -v 2>/dev/null | head -1) (${default_php_path})${NC}"
+ fi
 }
 
 # Re-configure phpBolt if missing (e.g. partial install or PHP package refresh)
@@ -1008,6 +1036,7 @@ else
 fi
 
 PHP_VERSION="$(detect_php_version)"
+export PATH="/usr/bin:/bin:/sbin:${PATH}"
 echo -e "${GREEN}Detected PowerPs release target: PHP ${PHP_VERSION}${NC}"
 if [ -f "/var/www/html/laravel-app/.powerps-bolt-version" ]; then
  echo -e "${GREEN}phpBolt version: $(tr -d '[:space:]' < /var/www/html/laravel-app/.powerps-bolt-version)${NC}"
