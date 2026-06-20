@@ -61,6 +61,13 @@ php artisan config:clear
 curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<core-subdomain>/api/telegram/webhooks/inbound"
 ```
 
+اگر خطای `The environment file is invalid` دیدید (مثلاً `"${PUSHER_APP_CLUSTER}"APP_NAME=...`)، `.env` خراب شده — خط ادغام‌شده را اصلاح کنید یا این دستور را بزنید و دوباره install:
+
+```sh
+sed -i -E 's/(")([A-Z][A-Z0-9_]*)=/\1\n\2=/g' /var/www/html/laravel-app/.env
+grep -n '^APP_NAME=' /var/www/html/laravel-app/.env
+```
+
 توکن را می‌توانید همان‌طور که @BotFather می‌دهد (بدون پیشوند `bot`) وارد کنید؛ اسکریپت نصب پیشوند را خودش اضافه می‌کند.
 
 ## خطای `bolt_decrypt()` در migrate

@@ -96,8 +96,42 @@ read_env_value() {
 set_env_value() {
  local key="$1"
  local value="$2"
- sed -i "/^${key}=/d" "${LARAVEL_ENV_FILE}"
- echo "${key}=${value}" >> "${LARAVEL_ENV_FILE}"
+ ensure_env_file_ready
+ awk -v key="${key}" -v val="${value}" '
+  BEGIN { found=0 }
+  index($0, key "=") == 1 {
+   if (!found) {
+    print key "=" val
+    found=1
+   }
+   next
+  }
+  { print }
+  END { if (!found) print key "=" val }
+ ' "${LARAVEL_ENV_FILE}" > "${LARAVEL_ENV_FILE}.tmp"
+ mv "${LARAVEL_ENV_FILE}.tmp" "${LARAVEL_ENV_FILE}"
+ ensure_env_file_ready
+}
+
+ensure_env_file_ready() {
+ if [ ! -f "${LARAVEL_ENV_FILE}" ]; then
+ return 0
+ fi
+ if [ ! -s "${LARAVEL_ENV_FILE}" ]; then
+ return 0
+ fi
+ if [ "$(tail -c 1 "${LARAVEL_ENV_FILE}" | wc -l)" -eq 0 ]; then
+ echo "" >> "${LARAVEL_ENV_FILE}"
+ fi
+}
+
+repair_merged_env_lines() {
+ if [ ! -f "${LARAVEL_ENV_FILE}" ]; then
+ return 0
+ fi
+ # Fix missing newlines, e.g. ..."${PUSHER_APP_CLUSTER}"APP_NAME=Laravel
+ sed -i -E 's/(")([A-Z][A-Z0-9_]*)=/\1\n\2=/g' "${LARAVEL_ENV_FILE}" 2>/dev/null || true
+ ensure_env_file_ready
 }
 
 normalize_telegram_token() {
@@ -173,6 +207,7 @@ ensure_laravel_env_file() {
 
  if [ -f "/var/www/html/laravel-app/.env.example" ]; then
  cp /var/www/html/laravel-app/.env.example "${LARAVEL_ENV_FILE}"
+ ensure_env_file_ready
  else
  cat > "${LARAVEL_ENV_FILE}" <<'EOF'
 APP_NAME=Laravel
@@ -275,6 +310,8 @@ cleanup_stale_bolt_config() {
  sudo rm -f \
   "${cli_conf_dir}/99-bolt.ini" \
   "${apache_conf_dir}/99-bolt.ini" \
+  "${cli_conf_dir}"/*bolt*.ini \
+  "${apache_conf_dir}"/*bolt*.ini \
   "${ini_file}" \
   "${php_ext_dir}/bolt.so" 2>/dev/null || true
  if command -v phpdismod >/dev/null 2>&1; then
@@ -346,17 +383,18 @@ configure_bolt() {
 
  bolt_ini_line="extension=${php_ext_dir}/bolt.so"
 
- # mods-available + phpenmod
- sudo mkdir -p "$(dirname "${ini_file}")"
- echo "${bolt_ini_line}" | sudo tee "${ini_file}" >/dev/null
- if command -v phpenmod >/dev/null 2>&1; then
- sudo phpenmod -v "${php_version}" bolt 2>/dev/null || true
- fi
-
- # Always write conf.d directly (absolute path) for CLI and Apache
+ # Write conf.d directly for CLI and Apache (do not also phpenmod or bolt loads twice).
  sudo mkdir -p "${cli_conf_dir}" "${apache_conf_dir}"
  echo "${bolt_ini_line}" | sudo tee "${cli_conf_dir}/99-bolt.ini" >/dev/null
  echo "${bolt_ini_line}" | sudo tee "${apache_conf_dir}/99-bolt.ini" >/dev/null
+
+ bolt_count="$(${php_bin} -m 2>&1 | grep -ci '^bolt$' || true)"
+ if [ "${bolt_count}" -gt 1 ]; then
+ echo -e "${YELLOW}Warning: phpBolt loaded ${bolt_count} times; cleaning duplicate bolt ini files...${NC}"
+ cleanup_stale_bolt_config "${php_version}" "${php_ext_dir}"
+ echo "${bolt_ini_line}" | sudo tee "${cli_conf_dir}/99-bolt.ini" >/dev/null
+ echo "${bolt_ini_line}" | sudo tee "${apache_conf_dir}/99-bolt.ini" >/dev/null
+ fi
 
  if ! ${php_bin} -m 2>/dev/null | grep -qi '^bolt$'; then
  echo -e "${RED}Error: phpBolt is not loading for ${php_bin}.${NC}"
@@ -937,6 +975,7 @@ run_with_retry "php${PHP_VERSION} /usr/bin/composer install --no-interaction --n
 # Set up environment variables if not already set
 echo -e "${GREEN}Setting up environment variables...${NC}"
 ensure_laravel_env_file
+repair_merged_env_lines
 
 if [ ! -s "${LARAVEL_ENV_FILE}" ] || ! grep -q '^APP_NAME=' "${LARAVEL_ENV_FILE}"; then
  echo -e "${YELLOW}Warning: .env was missing or incomplete; recreating base settings.${NC}"

@@ -56,6 +56,8 @@ ini_file="/etc/php/${PHP_VERSION}/mods-available/bolt.ini"
 sudo rm -f \
  "${cli_conf_dir}/99-bolt.ini" \
  "${apache_conf_dir}/99-bolt.ini" \
+ "${cli_conf_dir}"/*bolt*.ini \
+ "${apache_conf_dir}"/*bolt*.ini \
  "${ini_file}" \
  "${php_ext_dir}/bolt.so" 2>/dev/null || true
 command -v phpdismod >/dev/null 2>&1 && sudo phpdismod -v "${PHP_VERSION}" bolt 2>/dev/null || true
@@ -85,11 +87,9 @@ sudo mkdir -p "${php_ext_dir}"
 sudo cp "${bolt_src}" "${php_ext_dir}/bolt.so"
 sudo chmod 644 "${php_ext_dir}/bolt.so"
 
-sudo mkdir -p "$(dirname "${ini_file}")" "${cli_conf_dir}" "${apache_conf_dir}"
-echo "${bolt_ini_line}" | sudo tee "${ini_file}" >/dev/null
+sudo mkdir -p "${cli_conf_dir}" "${apache_conf_dir}"
 echo "${bolt_ini_line}" | sudo tee "${cli_conf_dir}/99-bolt.ini" >/dev/null
 echo "${bolt_ini_line}" | sudo tee "${apache_conf_dir}/99-bolt.ini" >/dev/null
-command -v phpenmod >/dev/null 2>&1 && sudo phpenmod -v "${PHP_VERSION}" bolt 2>/dev/null || true
 
 sudo update-alternatives --install /usr/bin/php php "/usr/bin/${php_bin}" 100 2>/dev/null || true
 sudo update-alternatives --set php "/usr/bin/${php_bin}" 2>/dev/null || true
