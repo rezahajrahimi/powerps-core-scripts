@@ -243,10 +243,71 @@ pick_bolt_source() {
  esac
 }
 
+log_step() {
+ echo -e "$1"
+ echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: $2" | sudo tee -a /var/log/powerps_install.log >/dev/null
+}
+
+resolve_php_extension_dir() {
+ local php_version="$1"
+ local php_bin="php${php_version}"
+ local php_ext_dir
+
+ # Use -n so a broken phpBolt from a partial install cannot hang or crash PHP CLI.
+ php_ext_dir="$(${php_bin} -n -i 2>/dev/null | awk -F'=> ' '/^extension_dir/{print $2; exit}')"
+ if [ -z "${php_ext_dir}" ]; then
+ case "${php_version}" in
+ 8.4) php_ext_dir="/usr/lib/php/20240924" ;;
+ 8.3) php_ext_dir="/usr/lib/php/20230831" ;;
+ *) php_ext_dir="/usr/lib/php/${php_version}" ;;
+ esac
+ fi
+ echo "${php_ext_dir}"
+}
+
+cleanup_stale_bolt_config() {
+ local php_version="$1"
+ local php_ext_dir="$2"
+ local ini_file="/etc/php/${php_version}/mods-available/bolt.ini"
+ local cli_conf_dir="/etc/php/${php_version}/cli/conf.d"
+ local apache_conf_dir="/etc/php/${php_version}/apache2/conf.d"
+
+ sudo rm -f \
+  "${cli_conf_dir}/99-bolt.ini" \
+  "${apache_conf_dir}/99-bolt.ini" \
+  "${ini_file}" \
+  "${php_ext_dir}/bolt.so" 2>/dev/null || true
+ if command -v phpdismod >/dev/null 2>&1; then
+  sudo phpdismod -v "${php_version}" bolt 2>/dev/null || true
+ fi
+}
+
+ensure_laravel_directories() {
+ local app_dir="/var/www/html/laravel-app"
+ local dir
+
+ for dir in \
+  "${app_dir}/storage" \
+  "${app_dir}/storage/app" \
+  "${app_dir}/storage/framework" \
+  "${app_dir}/storage/framework/cache" \
+  "${app_dir}/storage/framework/sessions" \
+  "${app_dir}/storage/framework/views" \
+  "${app_dir}/storage/logs" \
+  "${app_dir}/bootstrap/cache" \
+  "${app_dir}/public/images" \
+  "${app_dir}/public/images/qrcodes" \
+  "${app_dir}/public/images/transaction_images"
+ do
+  sudo mkdir -p "${dir}"
+ done
+}
+
 # Configure phpBolt extension for Apache and CLI
 configure_bolt() {
  local php_version="$1"
  local bolt_src
+ local bolt_test_err
  local php_ext_dir
  local php_bin="php${php_version}"
  local ini_file="/etc/php/${php_version}/mods-available/bolt.ini"
@@ -259,25 +320,23 @@ configure_bolt() {
  exit 1
  fi
 
+ php_ext_dir="$(resolve_php_extension_dir "${php_version}")"
+ cleanup_stale_bolt_config "${php_version}" "${php_ext_dir}"
+
  bolt_src="$(pick_bolt_source)"
  if [ -z "${bolt_src}" ] || [ ! -f "${bolt_src}" ]; then
  echo -e "${RED}Error: bolt.so not found in /var/www/html/laravel-app (bolt.so, bolt-x86_64.so, bolt-aarch64.so).${NC}"
+ echo -e "${YELLOW}Run install again after powerps-core is fully cloned, or restore bolt*.so from the repo.${NC}"
  exit 1
  fi
 
- if ! ${php_bin} -d "extension=${bolt_src}" -r 'exit(function_exists("bolt_decrypt")?0:1);' 2>/dev/null; then
+ bolt_test_err="$(${php_bin} -n -d "extension=${bolt_src}" -r 'exit(function_exists("bolt_decrypt")?0:1);' 2>&1)" || {
  echo -e "${RED}Error: bolt binary is incompatible with ${php_bin}.${NC}"
+ if [ -n "${bolt_test_err}" ]; then
+ echo -e "${YELLOW}${bolt_test_err}${NC}"
+ fi
  exit 1
- fi
-
- php_ext_dir="$(${php_bin} -i 2>/dev/null | awk -F'=> ' '/^extension_dir/{print $2; exit}')"
- if [ -z "${php_ext_dir}" ]; then
- case "${php_version}" in
- 8.4) php_ext_dir="/usr/lib/php/20240924" ;;
- 8.3) php_ext_dir="/usr/lib/php/20230831" ;;
- *) php_ext_dir="/usr/lib/php/${php_version}" ;;
- esac
- fi
+ }
 
  echo -e "${GREEN}Configuring phpBolt (${bolt_src}) for PHP ${php_version}...${NC}"
  echo -e "${CYAN}phpBolt is bundled in powerps-core repo (not downloaded separately).${NC}"
@@ -841,11 +900,14 @@ sudo update-alternatives --set php "/usr/bin/php${PHP_VERSION}" || true
 sudo a2enmod "php${PHP_VERSION}" || true
 
 # Configure Bolt extension
+log_step "${GREEN}Preparing phpBolt for PHP ${PHP_VERSION}...${NC}" "Starting configure_bolt for PHP ${PHP_VERSION}"
 configure_bolt "${PHP_VERSION}"
 ensure_php_default "${PHP_VERSION}"
+log_step "${GREEN}phpBolt setup finished.${NC}" "configure_bolt completed for PHP ${PHP_VERSION}"
 
 # تنظیم مجوزها در هر دو حالت نصب اولیه و نصب مجدد
-echo -e "${GREEN}Setting permissions for Laravel directories...${NC}"
+log_step "${GREEN}Setting permissions for Laravel directories...${NC}" "Ensuring Laravel directories and permissions"
+ensure_laravel_directories
 sudo chown -R www-data:www-data /var/www/html/laravel-app/storage
 sudo chown -R www-data:www-data /var/www/html/laravel-app/bootstrap/cache
 sudo chown -R www-data:www-data /var/www/html/laravel-app/public

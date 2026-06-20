@@ -41,25 +41,7 @@ if ! command -v "${php_bin}" >/dev/null 2>&1; then
  exit 1
 fi
 
-bolt_src="$(pick_bolt_source)" || {
- echo -e "${RED}Error: bolt.so not found in ${APP_DIR}${NC}" >&2
- ls -la "${APP_DIR}"/bolt*.so 2>/dev/null || true
- echo -e "${YELLOW}Run: cd ${APP_DIR} && git fetch origin main && git reset --hard origin/main${NC}" >&2
- exit 1
-}
-
-echo -e "${GREEN}Found bolt binary: ${bolt_src} ($(file -b "${bolt_src}"))${NC}"
-
-# Test load before installing (shows PHP startup errors if binary is incompatible)
-if ! ${php_bin} -d "extension=${bolt_src}" -r 'exit(function_exists("bolt_decrypt")?0:1);' 2>/tmp/powerps-bolt-test.err; then
- echo -e "${RED}Error: bolt binary cannot load in ${php_bin}.${NC}" >&2
- cat /tmp/powerps-bolt-test.err >&2 || true
- echo -e "${YELLOW}Check: ldd ${bolt_src}${NC}" >&2
- exit 1
-fi
-rm -f /tmp/powerps-bolt-test.err
-
-php_ext_dir="$(${php_bin} -i 2>/dev/null | awk -F'=> ' '/^extension_dir/{print $2; exit}')"
+php_ext_dir="$(${php_bin} -n -i 2>/dev/null | awk -F'=> ' '/^extension_dir/{print $2; exit}')"
 if [ -z "${php_ext_dir}" ]; then
  case "${PHP_VERSION}" in
  8.4) php_ext_dir="/usr/lib/php/20240924" ;;
@@ -71,6 +53,31 @@ fi
 cli_conf_dir="/etc/php/${PHP_VERSION}/cli/conf.d"
 apache_conf_dir="/etc/php/${PHP_VERSION}/apache2/conf.d"
 ini_file="/etc/php/${PHP_VERSION}/mods-available/bolt.ini"
+sudo rm -f \
+ "${cli_conf_dir}/99-bolt.ini" \
+ "${apache_conf_dir}/99-bolt.ini" \
+ "${ini_file}" \
+ "${php_ext_dir}/bolt.so" 2>/dev/null || true
+command -v phpdismod >/dev/null 2>&1 && sudo phpdismod -v "${PHP_VERSION}" bolt 2>/dev/null || true
+
+bolt_src="$(pick_bolt_source)" || {
+ echo -e "${RED}Error: bolt.so not found in ${APP_DIR}${NC}" >&2
+ ls -la "${APP_DIR}"/bolt*.so 2>/dev/null || true
+ echo -e "${YELLOW}Run: cd ${APP_DIR} && git fetch origin main && git reset --hard origin/main${NC}" >&2
+ exit 1
+}
+
+echo -e "${GREEN}Found bolt binary: ${bolt_src} ($(file -b "${bolt_src}"))${NC}"
+
+# Test load before installing (shows PHP startup errors if binary is incompatible)
+if ! ${php_bin} -n -d "extension=${bolt_src}" -r 'exit(function_exists("bolt_decrypt")?0:1);' 2>/tmp/powerps-bolt-test.err; then
+ echo -e "${RED}Error: bolt binary cannot load in ${php_bin}.${NC}" >&2
+ cat /tmp/powerps-bolt-test.err >&2 || true
+ echo -e "${YELLOW}Check: ldd ${bolt_src}${NC}" >&2
+ exit 1
+fi
+rm -f /tmp/powerps-bolt-test.err
+
 bolt_ini_line="extension=${php_ext_dir}/bolt.so"
 
 echo -e "${GREEN}Installing phpBolt from ${bolt_src} -> ${php_ext_dir}/bolt.so${NC}"

@@ -67,6 +67,15 @@ curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<core-subdomain
 
 اگر `php artisan migrate` خطای `Call to undefined function bolt_decrypt()` داد، یعنی **phpBolt برای PHP CLI لود نشده** یا دستور `php` به نسخه اشتباه اشاره می‌کند.
 
+اگر `install.sh` بعد از `Module php8.4 already enabled` متوقف شد، احتمالاً **phpBolt از نصب ناقص قبلی** باعث hang یا crash در PHP CLI شده. اول `fix-phpbolt.sh` را اجرا کنید، بعد دوباره install:
+
+```sh
+sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rezahajrahimi/powerps-core-scripts/refs/heads/main/fix-phpbolt.sh)"
+sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rezahajrahimi/powerps-core-scripts/refs/heads/main/install.sh)" @ install
+```
+
+لاگ نصب: `/var/log/powerps_install.log`
+
 ```sh
 # تشخیص
 php -v
