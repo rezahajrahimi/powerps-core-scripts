@@ -47,6 +47,8 @@ sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rezahajrahimi/powerps
 
 همان دستور نصب را دوباره اجرا کنید و گزینه **Install / Update** را بزنید. اسکریپت `git pull` می‌زند و PHP/phpBolt را با نسخه جدید ریپو هماهنگ می‌کند.
 
+اگر install روی `add-apt-repository` یا `api.launchpad.net` خطا داد، یعنی DNS سرور موقتاً مشکل دارد. PPA از قبل اضافه شده باشد، نسخه جدید install آن مرحله را رد می‌کند.
+
 ## تنظیم دستی Bot Token و Admin ID
 
 اگر نصب بدون پرسیدن توکن تمام شد، مقادیر را در `.env` بگذارید و دوباره install را اجرا کنید (یا webhook را دستی ست کنید):

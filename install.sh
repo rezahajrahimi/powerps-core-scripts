@@ -459,6 +459,93 @@ run_with_retry() {
  return 0
 }
 
+ensure_ondrej_php_ppa() {
+ local codename=""
+
+ if grep -Rqs 'ppa.launchpadcontent.net/ondrej/php' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; then
+ echo -e "${GREEN}ondrej/php PPA already configured; skipping add-apt-repository.${NC}"
+ return 0
+ fi
+
+ codename="$(. /etc/os-release 2>/dev/null && echo "${VERSION_CODENAME:-}")"
+ if [ -z "${codename}" ]; then
+ codename="$(lsb_release -sc 2>/dev/null || true)"
+ fi
+
+ echo -e "${GREEN}Adding ondrej/php PPA...${NC}"
+ if sudo add-apt-repository -y ppa:ondrej/php 2>/dev/null; then
+ return 0
+ fi
+
+ echo -e "${YELLOW}add-apt-repository failed (often DNS/Launchpad). Adding PPA list directly...${NC}"
+ if [ -z "${codename}" ]; then
+ echo -e "${RED}Could not detect Ubuntu codename for ondrej/php PPA.${NC}"
+ exit 1
+ fi
+
+ echo "deb https://ppa.launchpadcontent.net/ondrej/php/ubuntu ${codename} main" | \
+ sudo tee "/etc/apt/sources.list.d/ondrej-ubuntu-php-${codename}.list" >/dev/null
+}
+
+sanitize_release_composer_json() {
+ local composer_file="$1"
+ [ -f "${composer_file}" ] || return 0
+
+ php -r '
+$path = $argv[1];
+$data = json_decode(file_get_contents($path), true);
+if (!is_array($data)) { exit(1); }
+unset($data["require-dev"]["sbamtr/laravel-source-encrypter"]);
+if (isset($data["autoload-dev"]["psr-4"]["sbamtr\\LaravelSourceEncrypter\\"])) {
+ unset($data["autoload-dev"]["psr-4"]["sbamtr\\LaravelSourceEncrypter\\"]);
+}
+if (!empty($data["repositories"])) {
+ $data["repositories"] = array_values(array_filter(
+ $data["repositories"],
+ fn($repo) => ($repo["type"] ?? "") !== "path"
+ ));
+}
+file_put_contents(
+ $path,
+ json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n"
+);
+' "${composer_file}"
+}
+
+prepare_composer_for_install() {
+ local app_dir="/var/www/html/laravel-app"
+ local composer_bin="/usr/bin/composer"
+
+ cd "${app_dir}" || exit 1
+
+ if ! php${PHP_VERSION} "${composer_bin}" validate --no-check-publish --no-interaction >/dev/null 2>&1; then
+ echo -e "${YELLOW}Composer files out of sync; removing build-only dev dependencies from composer.json...${NC}"
+ sanitize_release_composer_json "${app_dir}/composer.json"
+ php${PHP_VERSION} "${composer_bin}" update --lock --no-install --no-dev --no-interaction --ignore-platform-reqs --no-scripts >/dev/null 2>&1 || true
+ fi
+}
+
+install_composer_dependencies() {
+ local app_dir="/var/www/html/laravel-app"
+ local composer_bin="/usr/bin/composer"
+ local install_cmd="php${PHP_VERSION} ${composer_bin} install --no-dev --no-interaction --no-progress --prefer-dist --optimize-autoloader --no-scripts"
+
+ cd "${app_dir}" || exit 1
+ prepare_composer_for_install
+
+ echo -e "${GREEN}Installing Composer dependencies...${NC}"
+ run_with_retry "${install_cmd}" 3 5 || {
+ echo -e "${RED}Composer install failed. Trying with --ignore-platform-reqs...${NC}"
+ run_with_retry "${install_cmd} --ignore-platform-reqs" 3 5 || {
+ echo -e "${RED}Composer install failed even with --ignore-platform-reqs${NC}"
+ echo -e "${YELLOW}Run manually: cd ${app_dir} && php${PHP_VERSION} ${composer_bin} validate${NC}"
+ exit 1
+ }
+ }
+
+ php${PHP_VERSION} "${composer_bin}" dump-autoload --no-dev --optimize --no-interaction --ignore-platform-reqs >/dev/null 2>&1 || true
+}
+
 # Function to setup SSL certificates
 setup_ssl() {
  echo -e "${GREEN}Obtaining TLS certificates for ${LARAVEL_SUBDOMAIN} and ${HTML5_SUBDOMAIN}...${NC}"
@@ -738,7 +825,7 @@ fi
 echo -e "${GREEN}Updating package lists and installing necessary packages...${NC}"
 sudo apt-get update
 sudo apt-get install -y software-properties-common curl openssl
-sudo add-apt-repository -y ppa:ondrej/php
+ensure_ondrej_php_ppa
 sudo apt-get update
 
 # Install PHP and specific extensions (version detected after clone/update)
@@ -963,14 +1050,7 @@ echo -e "${GREEN}Restarting Apache to apply changes...${NC}"
 sudo systemctl restart apache2
 
 # Install Composer dependencies
-echo -e "${GREEN}Installing Composer dependencies...${NC}"
-run_with_retry "php${PHP_VERSION} /usr/bin/composer install --no-interaction --no-progress --prefer-dist" 3 5 || {
- echo -e "${RED}Composer install failed. Trying with --ignore-platform-reqs...${NC}"
- run_with_retry "php${PHP_VERSION} /usr/bin/composer install --no-interaction --no-progress --prefer-dist --ignore-platform-reqs" 3 5 || {
- echo -e "${RED}Composer install failed even with --ignore-platform-reqs${NC}"
- exit 1
- }
-}
+install_composer_dependencies
 
 # Set up environment variables if not already set
 echo -e "${GREEN}Setting up environment variables...${NC}"
