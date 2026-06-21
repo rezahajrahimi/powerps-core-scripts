@@ -1,96 +1,234 @@
 #!/bin/bash
+#
+# PowerPs Core + WebApp installer / updater
+# Usage: sudo bash install.sh   OR   curl ... | sudo bash
 
-# Color codes
-GREEN='\033[0;32m'
-CYAN='\033[0;36m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m' # No Color
-
-# Fail fast and safer shell options
 set -o errexit
 set -o nounset
 set -o pipefail
 
-# Error handler
-error_handler() {
- local exit_code=$?
- echo -e "${RED}Error: Script exited with code ${exit_code}${NC}"
- echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: Script exited with code ${exit_code}" | sudo tee -a /var/log/powerps_install.log >/dev/null
- exit ${exit_code}
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+APP_DIR="/var/www/html/laravel-app"
+WEBAPP_DIR="/var/www/html/powerps-webapp"
+LARAVEL_ENV_FILE="${APP_DIR}/.env"
+STATE_DIR="/var/lib/powerps"
+SUBDOMAIN_FILE="${STATE_DIR}/subdomains.conf"
+LOG_FILE="/var/log/powerps_install.log"
+
+DB_NAME="powerps_db"
+DB_USER="powerps_user"
+DB_PASS=""
+PHP_VERSION="8.4"
+COMPOSER_BIN="/usr/bin/composer"
+
+LARAVEL_SUBDOMAIN=""
+HTML5_SUBDOMAIN=""
+TELEGRAM_BOT_TOKEN=""
+TELEGRAM_ADMIN_ID=""
+
+# ---------------------------------------------------------------------------
+# Logging / helpers
+# ---------------------------------------------------------------------------
+init_logging() {
+ sudo mkdir -p /var/log "${STATE_DIR}"
+ sudo touch "${LOG_FILE}"
+ sudo chown "$(whoami):$(whoami)" "${LOG_FILE}" 2>/dev/null || true
+ sudo chmod 640 "${LOG_FILE}" 2>/dev/null || true
+ sudo mkdir -p "${STATE_DIR}"
+ sudo chown "$(whoami):$(whoami)" "${STATE_DIR}" 2>/dev/null || true
 }
-trap error_handler ERR
 
-# Ensure log file exists and is writable
-sudo mkdir -p /var/log
-sudo touch /var/log/powerps_install.log
-sudo chown $(whoami):$(whoami) /var/log/powerps_install.log
-sudo chmod 640 /var/log/powerps_install.log
+log_info() {
+ echo -e "${GREEN}$1${NC}"
+ echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: $1" | sudo tee -a "${LOG_FILE}" >/dev/null
+}
 
-# Helper: check command result and log
-check_command() {
- if [ $? -ne 0 ]; then
- echo -e "${RED}$1${NC}"
- echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1" | sudo tee -a /var/log/powerps_install.log >/dev/null
+log_warn() {
+ echo -e "${YELLOW}$1${NC}"
+ echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARN: $1" | sudo tee -a "${LOG_FILE}" >/dev/null
+}
+
+log_error() {
+ echo -e "${RED}$1${NC}" >&2
+ echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1" | sudo tee -a "${LOG_FILE}" >/dev/null
+}
+
+die() {
+ log_error "$1"
  exit 1
- fi
 }
 
-# Backup helper (defined globally so any path can call it)
+run_with_retry() {
+ local cmd="$1"
+ local retries="${2:-3}"
+ local delay="${3:-5}"
+ local attempt=1
+ until eval "$cmd"; do
+  if [ "${attempt}" -ge "${retries}" ]; then
+   return 1
+  fi
+  log_warn "Attempt ${attempt} failed; retrying in ${delay}s..."
+  attempt=$((attempt + 1))
+  sleep "${delay}"
+ done
+}
+
 backup_existing() {
  if [ -d "$1" ]; then
- backup_dir="${1}_backup_$(date +%Y%m%d_%H%M%S)"
- mv "$1" "$backup_dir"
- echo "[$(date '+%Y-%m-%d %H:%M:%S')] Backed up $1 to $backup_dir" | sudo tee -a /var/log/powerps_install.log >/dev/null
+  local backup_dir="${1}_backup_$(date +%Y%m%d_%H%M%S)"
+  mv "$1" "${backup_dir}"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] Backed up $1 to ${backup_dir}" | sudo tee -a "${LOG_FILE}" >/dev/null
  fi
 }
 
-# Update existing powerps-core checkout without failing on server-side file drift
-update_powerps_core_repo() {
- local app_dir="/var/www/html/laravel-app"
- local backup_dir="/tmp/powerps-core-update-$(date +%Y%m%d%H%M%S)"
-
- echo -e "${GREEN}Updating the Laravel project repository...${NC}"
- mkdir -p "${backup_dir}"
-
- if [ -f "${app_dir}/.env" ]; then
- cp "${app_dir}/.env" "${backup_dir}/.env"
- fi
- if [ -d "${app_dir}/public/images/qrcodes" ]; then
- cp -a "${app_dir}/public/images/qrcodes" "${backup_dir}/"
- fi
- if [ -d "${app_dir}/public/images/transaction_images" ]; then
- cp -a "${app_dir}/public/images/transaction_images" "${backup_dir}/"
- fi
-
- cd "${app_dir}"
- git fetch origin main
- git reset --hard origin/main
-
- if [ -f "${backup_dir}/.env" ]; then
- cp "${backup_dir}/.env" "${app_dir}/.env"
- fi
- if [ -d "${backup_dir}/qrcodes" ]; then
- mkdir -p "${app_dir}/public/images/qrcodes"
- cp -a "${backup_dir}/qrcodes/." "${app_dir}/public/images/qrcodes/"
- fi
- if [ -d "${backup_dir}/transaction_images" ]; then
- mkdir -p "${app_dir}/public/images/transaction_images"
- cp -a "${backup_dir}/transaction_images/." "${app_dir}/public/images/transaction_images/"
- fi
-
- rm -rf "${backup_dir}"
- echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: powerps-core updated to origin/main" | sudo tee -a /var/log/powerps_install.log >/dev/null
+php_bin() {
+ echo "php${PHP_VERSION}"
 }
 
-LARAVEL_ENV_FILE="/var/www/html/laravel-app/.env"
+artisan() {
+ cd "${APP_DIR}"
+ "$(php_bin)" artisan "$@"
+}
 
+start_service() {
+ local svc="$1"
+ if command -v systemctl >/dev/null 2>&1 && systemctl start "${svc}" 2>/dev/null; then
+  return 0
+ fi
+ if command -v service >/dev/null 2>&1 && service "${svc}" start 2>/dev/null; then
+  return 0
+ fi
+ return 1
+}
+
+restart_service() {
+ local svc="$1"
+ if command -v systemctl >/dev/null 2>&1 && systemctl restart "${svc}" 2>/dev/null; then
+  return 0
+ fi
+ if command -v service >/dev/null 2>&1 && service "${svc}" restart 2>/dev/null; then
+  return 0
+ fi
+ return 1
+}
+
+enable_service() {
+ local svc="$1"
+ systemctl enable "${svc}" >/dev/null 2>&1 || true
+}
+
+# ---------------------------------------------------------------------------
+# Subdomain state
+# ---------------------------------------------------------------------------
+load_subdomains_from_file() {
+ local file="$1"
+ [ -f "${file}" ] || return 1
+ # shellcheck disable=SC1090
+ source "${file}"
+ [ -n "${LARAVEL_SUBDOMAIN:-}" ] && [ -n "${HTML5_SUBDOMAIN:-}" ]
+}
+
+persist_subdomains() {
+ echo "LARAVEL_SUBDOMAIN=${LARAVEL_SUBDOMAIN}" | sudo tee "${SUBDOMAIN_FILE}" >/dev/null
+ echo "HTML5_SUBDOMAIN=${HTML5_SUBDOMAIN}" | sudo tee -a "${SUBDOMAIN_FILE}" >/dev/null
+}
+
+detect_subdomains_from_apache() {
+ local core_conf="/etc/apache2/sites-available/powerps-core.conf"
+ local web_conf="/etc/apache2/sites-available/powerps-webapp.conf"
+ if [ -f "${core_conf}" ]; then
+  LARAVEL_SUBDOMAIN="$(grep -E '^\s*ServerName\s+' "${core_conf}" 2>/dev/null | awk '{print $2}' | head -1)"
+ fi
+ if [ -f "${web_conf}" ]; then
+  HTML5_SUBDOMAIN="$(grep -E '^\s*ServerName\s+' "${web_conf}" 2>/dev/null | awk '{print $2}' | head -1)"
+ fi
+}
+
+strip_url_host() {
+ local url="$1"
+ url="${url#https://}"
+ url="${url#http://}"
+ url="${url%%/*}"
+ echo "${url}"
+}
+
+detect_subdomains_from_env() {
+ [ -f "${LARAVEL_ENV_FILE}" ] || return 1
+ local app_url front_url
+ app_url="$(grep -m1 '^APP_URL=' "${LARAVEL_ENV_FILE}" | cut -d= -f2- | tr -d '"' | tr -d "'")"
+ front_url="$(grep -m1 '^FRONT_URL=' "${LARAVEL_ENV_FILE}" | cut -d= -f2- | tr -d '"' | tr -d "'")"
+ [ -n "${app_url}" ] && LARAVEL_SUBDOMAIN="$(strip_url_host "${app_url}")"
+ [ -n "${front_url}" ] && HTML5_SUBDOMAIN="$(strip_url_host "${front_url}")"
+}
+
+powerps_is_installed() {
+ [ -d "${APP_DIR}/.git" ] || [ -d "${APP_DIR}" ]
+}
+
+prompt_for_subdomains() {
+ while true; do
+  read -e -p "Enter your Core subdomain (e.g., core.domain.com): " LARAVEL_SUBDOMAIN
+  [[ "${LARAVEL_SUBDOMAIN}" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$ ]] && break
+  log_warn "Invalid domain format. Please try again."
+ done
+ while true; do
+  read -e -p "Enter your WebApp subdomain (e.g., web.domain.com): " HTML5_SUBDOMAIN
+  [[ "${HTML5_SUBDOMAIN}" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$ ]] && break
+  log_warn "Invalid domain format. Please try again."
+ done
+ persist_subdomains
+}
+
+resolve_subdomains() {
+ if ! load_subdomains_from_file "${SUBDOMAIN_FILE}"; then
+  for legacy in "/root/subdomains.conf" "${HOME}/subdomains.conf" "./subdomains.conf"; do
+   if load_subdomains_from_file "${legacy}"; then
+    log_info "Migrating subdomains from ${legacy} -> ${SUBDOMAIN_FILE}"
+    persist_subdomains
+    break
+   fi
+  done
+ fi
+
+ if { [ -z "${LARAVEL_SUBDOMAIN:-}" ] || [ -z "${HTML5_SUBDOMAIN:-}" ]; } && powerps_is_installed; then
+  detect_subdomains_from_apache
+  [ -z "${LARAVEL_SUBDOMAIN:-}" ] || [ -z "${HTML5_SUBDOMAIN:-}" ] && detect_subdomains_from_env || true
+  if [ -n "${LARAVEL_SUBDOMAIN:-}" ] && [ -n "${HTML5_SUBDOMAIN:-}" ]; then
+   persist_subdomains
+   log_info "Detected existing install (${LARAVEL_SUBDOMAIN}, ${HTML5_SUBDOMAIN})"
+  fi
+ fi
+
+ if [ -n "${LARAVEL_SUBDOMAIN:-}" ] && [ -n "${HTML5_SUBDOMAIN:-}" ]; then
+  return 0
+ fi
+
+ if powerps_is_installed; then
+  log_warn "PowerPs is installed but subdomains were not found."
+  log_warn "Enter them once; they will be saved to ${SUBDOMAIN_FILE}"
+ fi
+ prompt_for_subdomains
+}
+
+# ---------------------------------------------------------------------------
+# .env helpers
+# ---------------------------------------------------------------------------
 read_env_value() {
  local key="$1"
- if [ ! -f "${LARAVEL_ENV_FILE}" ]; then
- return 0
- fi
+ [ -f "${LARAVEL_ENV_FILE}" ] || return 0
  grep -m1 "^${key}=" "${LARAVEL_ENV_FILE}" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d '[:space:]'
+}
+
+ensure_env_file_ready() {
+ [ -f "${LARAVEL_ENV_FILE}" ] && [ -s "${LARAVEL_ENV_FILE}" ] || return 0
+ if [ "$(tail -c 1 "${LARAVEL_ENV_FILE}" | wc -l)" -eq 0 ]; then
+  echo "" >> "${LARAVEL_ENV_FILE}"
+ fi
 }
 
 set_env_value() {
@@ -100,10 +238,7 @@ set_env_value() {
  awk -v key="${key}" -v val="${value}" '
   BEGIN { found=0 }
   index($0, key "=") == 1 {
-   if (!found) {
-    print key "=" val
-    found=1
-   }
+   if (!found) { print key "=" val; found=1 }
    next
   }
   { print }
@@ -113,102 +248,19 @@ set_env_value() {
  ensure_env_file_ready
 }
 
-ensure_env_file_ready() {
- if [ ! -f "${LARAVEL_ENV_FILE}" ]; then
- return 0
- fi
- if [ ! -s "${LARAVEL_ENV_FILE}" ]; then
- return 0
- fi
- if [ "$(tail -c 1 "${LARAVEL_ENV_FILE}" | wc -l)" -eq 0 ]; then
- echo "" >> "${LARAVEL_ENV_FILE}"
- fi
-}
-
 repair_merged_env_lines() {
- if [ ! -f "${LARAVEL_ENV_FILE}" ]; then
- return 0
- fi
- # Fix missing newlines, e.g. ..."${PUSHER_APP_CLUSTER}"APP_NAME=Laravel
+ [ -f "${LARAVEL_ENV_FILE}" ] || return 0
  sed -i -E 's/(")([A-Z][A-Z0-9_]*)=/\1\n\2=/g' "${LARAVEL_ENV_FILE}" 2>/dev/null || true
  ensure_env_file_ready
 }
 
-normalize_telegram_token() {
- local token="$1"
- token="${token#"${token%%[![:space:]]*}"}"
- token="${token%"${token##*[![:space:]]}"}"
- if [[ "${token}" =~ ^bot[0-9]+:[A-Za-z0-9_-]+$ ]]; then
- echo "${token}"
- elif [[ "${token}" =~ ^[0-9]+:[A-Za-z0-9_-]+$ ]]; then
- echo "bot${token}"
- else
- echo "${token}"
- fi
-}
-
-valid_telegram_token() {
- local token="$1"
- [[ "${token}" =~ ^bot[0-9]{8,}:[A-Za-z0-9_-]{35,}$ ]]
-}
-
-prompt_telegram_config() {
- local existing_token existing_admin
-
- existing_token="$(read_env_value TELEGRAM_BOT_TOKEN || true)"
- existing_admin="$(read_env_value TELEGRAM_ADMIN_ID || true)"
-
- if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${existing_token:-}" ]; then
- TELEGRAM_BOT_TOKEN="${existing_token}"
- fi
- if [ -z "${TELEGRAM_ADMIN_ID:-}" ] && [ -n "${existing_admin:-}" ]; then
- TELEGRAM_ADMIN_ID="${existing_admin}"
- fi
-
- if valid_telegram_token "${TELEGRAM_BOT_TOKEN:-}" && [[ "${TELEGRAM_ADMIN_ID:-}" =~ ^[0-9]{6,}$ ]]; then
- echo -e "${GREEN}Telegram bot token and admin ID already configured.${NC}"
- set_env_value TELEGRAM_BOT_TOKEN "${TELEGRAM_BOT_TOKEN}"
- set_env_value TELEGRAM_ADMIN_ID "${TELEGRAM_ADMIN_ID}"
- set_env_value TELEGRAM_API_ENDPOINT "https://api.telegram.org"
- return 0
- fi
-
- echo ""
- echo -e "${CYAN}======== Telegram Bot Configuration ========${NC}"
- echo -e "${CYAN}Enter your bot token from @BotFather and your Telegram user ID.${NC}"
- echo ""
-
- while true; do
- read -e -p "Enter your Bot token (e.g. 123456789:ABC... or bot123456789:ABC...): " TELEGRAM_BOT_TOKEN
- TELEGRAM_BOT_TOKEN="$(normalize_telegram_token "${TELEGRAM_BOT_TOKEN}")"
- if valid_telegram_token "${TELEGRAM_BOT_TOKEN}"; then
- break
- fi
- echo -e "${YELLOW}Invalid bot token format. Copy the token from @BotFather (with or without the bot prefix).${NC}"
- done
- set_env_value TELEGRAM_BOT_TOKEN "${TELEGRAM_BOT_TOKEN}"
-
- while true; do
- read -e -p "Enter your Bot admin ID (e.g., 123456789): " TELEGRAM_ADMIN_ID
- if [[ "${TELEGRAM_ADMIN_ID}" =~ ^[0-9]{6,}$ ]]; then
- break
- fi
- echo -e "${YELLOW}Invalid admin ID format. It should be a number with at least 6 digits.${NC}"
- done
- set_env_value TELEGRAM_ADMIN_ID "${TELEGRAM_ADMIN_ID}"
- set_env_value TELEGRAM_API_ENDPOINT "https://api.telegram.org"
- echo ""
-}
-
 ensure_laravel_env_file() {
- if [ -f "${LARAVEL_ENV_FILE}" ]; then
- return 0
+ [ -f "${LARAVEL_ENV_FILE}" ] && return 0
+ if [ -f "${APP_DIR}/.env.example" ]; then
+  cp "${APP_DIR}/.env.example" "${LARAVEL_ENV_FILE}"
+  ensure_env_file_ready
+  return 0
  fi
-
- if [ -f "/var/www/html/laravel-app/.env.example" ]; then
- cp /var/www/html/laravel-app/.env.example "${LARAVEL_ENV_FILE}"
- ensure_env_file_ready
- else
  cat > "${LARAVEL_ENV_FILE}" <<'EOF'
 APP_NAME=Laravel
 APP_ENV=production
@@ -237,289 +289,386 @@ QUEUE_CONNECTION=sync
 SESSION_DRIVER=file
 SESSION_LIFETIME=120
 EOF
+}
+
+normalize_telegram_token() {
+ local token="$1"
+ token="${token#"${token%%[![:space:]]*}"}"
+ token="${token%"${token##*[![:space:]]}"}"
+ if [[ "${token}" =~ ^bot[0-9]+:[A-Za-z0-9_-]+$ ]]; then
+  echo "${token}"
+ elif [[ "${token}" =~ ^[0-9]+:[A-Za-z0-9_-]+$ ]]; then
+  echo "bot${token}"
+ else
+  echo "${token}"
  fi
 }
 
-# Detect required PHP version from powerps-core release metadata
+valid_telegram_token() {
+ local token="$1"
+ [[ "${token}" =~ ^bot[0-9]{8,}:[A-Za-z0-9_-]{35,}$ ]]
+}
+
+prompt_telegram_config() {
+ local existing_token existing_admin
+ existing_token="$(read_env_value TELEGRAM_BOT_TOKEN || true)"
+ existing_admin="$(read_env_value TELEGRAM_ADMIN_ID || true)"
+
+ [ -z "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${existing_token:-}" ] && TELEGRAM_BOT_TOKEN="${existing_token}"
+ [ -z "${TELEGRAM_ADMIN_ID:-}" ] && [ -n "${existing_admin:-}" ] && TELEGRAM_ADMIN_ID="${existing_admin}"
+
+ if valid_telegram_token "${TELEGRAM_BOT_TOKEN:-}" && [[ "${TELEGRAM_ADMIN_ID:-}" =~ ^[0-9]{6,}$ ]]; then
+  log_info "Telegram bot token and admin ID already configured."
+  set_env_value TELEGRAM_BOT_TOKEN "${TELEGRAM_BOT_TOKEN}"
+  set_env_value TELEGRAM_ADMIN_ID "${TELEGRAM_ADMIN_ID}"
+  set_env_value TELEGRAM_API_ENDPOINT "https://api.telegram.org"
+  return 0
+ fi
+
+ echo ""
+ echo -e "${CYAN}======== Telegram Bot Configuration ========${NC}"
+ echo -e "${CYAN}Enter your bot token from @BotFather and your Telegram user ID.${NC}"
+ echo ""
+ while true; do
+  read -e -p "Enter your Bot token (e.g. 123456789:ABC... or bot123456789:ABC...): " TELEGRAM_BOT_TOKEN
+  TELEGRAM_BOT_TOKEN="$(normalize_telegram_token "${TELEGRAM_BOT_TOKEN}")"
+  valid_telegram_token "${TELEGRAM_BOT_TOKEN}" && break
+  log_warn "Invalid bot token format."
+ done
+ set_env_value TELEGRAM_BOT_TOKEN "${TELEGRAM_BOT_TOKEN}"
+
+ while true; do
+  read -e -p "Enter your Bot admin ID (e.g., 123456789): " TELEGRAM_ADMIN_ID
+  [[ "${TELEGRAM_ADMIN_ID}" =~ ^[0-9]{6,}$ ]] && break
+  log_warn "Invalid admin ID format."
+ done
+ set_env_value TELEGRAM_ADMIN_ID "${TELEGRAM_ADMIN_ID}"
+ set_env_value TELEGRAM_API_ENDPOINT "https://api.telegram.org"
+ echo ""
+}
+
+setup_laravel_env() {
+ log_info "Setting up environment variables..."
+ ensure_laravel_env_file
+ repair_merged_env_lines
+
+ if [ ! -s "${LARAVEL_ENV_FILE}" ] || ! grep -q '^APP_NAME=' "${LARAVEL_ENV_FILE}"; then
+  log_warn ".env was missing or incomplete; recreating base settings."
+  rm -f "${LARAVEL_ENV_FILE}"
+  ensure_laravel_env_file
+ fi
+
+ set_env_value APP_NAME "Laravel"
+ set_env_value APP_ENV "production"
+ grep -q '^APP_KEY=.\+' "${LARAVEL_ENV_FILE}" || set_env_value APP_KEY ""
+ set_env_value APP_DEBUG "true"
+ set_env_value APP_URL "https://${LARAVEL_SUBDOMAIN}"
+ set_env_value FRONT_URL "https://${HTML5_SUBDOMAIN}"
+ set_env_value DB_CONNECTION "mysql"
+ set_env_value DB_HOST "127.0.0.1"
+ set_env_value DB_PORT "3306"
+ set_env_value DB_DATABASE "${DB_NAME}"
+ set_env_value DB_USERNAME "${DB_USER}"
+ set_env_value DB_PASSWORD "${DB_PASS}"
+
+ prompt_telegram_config
+
+ local existing_zarinpal existing_nowpayments
+ existing_zarinpal="$(read_env_value ZARINPAL_MERCHANT_ID || true)"
+ if [ -z "${existing_zarinpal:-}" ]; then
+  read -e -p "Enter your Zarinpal Merchant ID (optional, press Enter to skip): " ZARINPAL_MERCHANT_ID
+  if [ -n "${ZARINPAL_MERCHANT_ID:-}" ] && [[ "${ZARINPAL_MERCHANT_ID}" =~ ^[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$ ]]; then
+   set_env_value ZARINPAL_MERCHANT_ID "${ZARINPAL_MERCHANT_ID}"
+  else
+   set_env_value ZARINPAL_MERCHANT_ID ""
+  fi
+ fi
+
+ existing_nowpayments="$(read_env_value NOWPAYMENTS_API_KEY || true)"
+ if [ -z "${existing_nowpayments:-}" ]; then
+  read -e -p "Enter your NOWPAYMENTS API KEY (optional, press Enter to skip): " NOWPAYMENTS_API_KEY
+  if [ -n "${NOWPAYMENTS_API_KEY:-}" ] && [[ "${NOWPAYMENTS_API_KEY}" =~ ^[A-Za-z0-9-]{36}$ ]]; then
+   set_env_value NOWPAYMENTS_API_KEY "${NOWPAYMENTS_API_KEY}"
+  else
+   set_env_value NOWPAYMENTS_API_KEY ""
+  fi
+ fi
+
+ sudo chown www-data:www-data "${LARAVEL_ENV_FILE}" 2>/dev/null || true
+ sudo chmod 600 "${LARAVEL_ENV_FILE}" 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------------------
+# System packages
+# ---------------------------------------------------------------------------
+ensure_ondrej_php_ppa() {
+ local codename=""
+ if grep -Rqs 'ppa.launchpadcontent.net/ondrej/php' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; then
+  log_info "ondrej/php PPA already configured."
+  return 0
+ fi
+ codename="$(. /etc/os-release 2>/dev/null && echo "${VERSION_CODENAME:-}")"
+ [ -z "${codename}" ] && codename="$(lsb_release -sc 2>/dev/null || true)"
+ if [ -z "${codename}" ]; then
+  die "Could not detect Ubuntu codename for ondrej/php PPA."
+ fi
+ if sudo add-apt-repository -y ppa:ondrej/php 2>/dev/null; then
+  return 0
+ fi
+ log_warn "add-apt-repository failed; adding PPA list directly."
+ echo "deb https://ppa.launchpadcontent.net/ondrej/php/ubuntu ${codename} main" | \
+  sudo tee "/etc/apt/sources.list.d/ondrej-ubuntu-php-${codename}.list" >/dev/null
+}
+
+install_base_packages() {
+ log_info "Installing system packages..."
+ sudo apt-get update
+ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+  software-properties-common curl openssl ca-certificates \
+  apache2 mysql-server composer unzip git \
+  python3-certbot-apache certbot \
+  php-imagick libmagickwand-dev || die "Failed to install base packages."
+ ensure_ondrej_php_ppa
+ sudo apt-get update
+}
+
+install_php_packages() {
+ log_info "Installing PHP ${PHP_VERSION} extensions..."
+ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+  "php${PHP_VERSION}" "php${PHP_VERSION}-mysql" "libapache2-mod-php${PHP_VERSION}" \
+  "php${PHP_VERSION}-cli" "php${PHP_VERSION}-zip" "php${PHP_VERSION}-xml" "php${PHP_VERSION}-dom" \
+  "php${PHP_VERSION}-mbstring" "php${PHP_VERSION}-curl" "php${PHP_VERSION}-gd" \
+  "php${PHP_VERSION}-bcmath" "php${PHP_VERSION}-intl" "php${PHP_VERSION}-imagick" \
+  "php${PHP_VERSION}-readline" || die "Failed to install PHP ${PHP_VERSION} packages."
+
+ sudo update-alternatives --install /usr/bin/php php "/usr/bin/php${PHP_VERSION}" 100 2>/dev/null || true
+ sudo update-alternatives --set php "/usr/bin/php${PHP_VERSION}" 2>/dev/null || true
+ sudo ln -sfn "/usr/bin/php${PHP_VERSION}" /usr/bin/php 2>/dev/null || true
+ sudo ln -sfn "/usr/bin/php${PHP_VERSION}" /usr/local/bin/php 2>/dev/null || true
+ sudo a2enmod "php${PHP_VERSION}" 2>/dev/null || true
+ hash -r 2>/dev/null || true
+ export PATH="/usr/bin:/bin:/sbin:${PATH}"
+}
+
 detect_php_version() {
- local version_file="/var/www/html/laravel-app/.powerps-php-version"
+ local version_file="${APP_DIR}/.powerps-php-version"
  if [ -f "${version_file}" ]; then
- tr -d '[:space:]' < "${version_file}"
- return 0
+  tr -d '[:space:]' < "${version_file}"
+  return 0
  fi
  echo "8.4"
 }
 
-# Pick bolt.so for current CPU architecture
+# ---------------------------------------------------------------------------
+# MySQL — fully automatic (no prompts)
+# ---------------------------------------------------------------------------
+ensure_mysql_running() {
+ log_info "Ensuring MySQL is running..."
+ sudo mkdir -p /var/run/mysqld
+ sudo chown mysql:mysql /var/run/mysqld 2>/dev/null || true
+ if ! start_service mysql; then
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -f -y || true
+  sudo dpkg --configure -a || true
+  systemctl daemon-reload 2>/dev/null || true
+  start_service mysql || die "MySQL failed to start. Check: journalctl -xeu mysql.service"
+ fi
+ enable_service mysql
+
+ local i
+ for i in $(seq 1 30); do
+  if [ -S /var/run/mysqld/mysqld.sock ] || [ -S /var/lib/mysql/mysql.sock ]; then
+   return 0
+  fi
+  sleep 1
+ done
+ die "MySQL socket not available after 30s."
+}
+
+load_db_password() {
+ if [ -f "${LARAVEL_ENV_FILE}" ]; then
+  DB_PASS="$(grep -m1 '^DB_PASSWORD=' "${LARAVEL_ENV_FILE}" | cut -d= -f2- | tr -d '"' | tr -d "'")"
+ fi
+ if [ -z "${DB_PASS:-}" ]; then
+  DB_PASS="$(openssl rand -base64 12 | tr -d '/+=' | head -c 16)"
+ fi
+}
+
+setup_powerps_database() {
+ log_info "Creating MySQL database and user (automatic)..."
+ load_db_password
+
+ sudo mysql <<SQL
+CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';
+ALTER USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';
+GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'localhost';
+FLUSH PRIVILEGES;
+SQL
+}
+
+# ---------------------------------------------------------------------------
+# phpBolt — install only when missing (no re-check loop on update)
+# ---------------------------------------------------------------------------
 pick_bolt_source() {
- local app_dir="/var/www/html/laravel-app"
  local arch
  arch="$(uname -m)"
  case "${arch}" in
- x86_64|amd64)
- if [ -f "${app_dir}/bolt-x86_64.so" ]; then
- echo "${app_dir}/bolt-x86_64.so"
- elif [ -f "${app_dir}/bolt.so" ]; then
- echo "${app_dir}/bolt.so"
- fi
- ;;
- aarch64|arm64)
- if [ -f "${app_dir}/bolt-aarch64.so" ]; then
- echo "${app_dir}/bolt-aarch64.so"
- elif [ -f "${app_dir}/bolt.so" ]; then
- echo "${app_dir}/bolt.so"
- fi
- ;;
- *)
- if [ -f "${app_dir}/bolt.so" ]; then
- echo "${app_dir}/bolt.so"
- fi
- ;;
+  x86_64|amd64)
+   [ -f "${APP_DIR}/bolt-x86_64.so" ] && echo "${APP_DIR}/bolt-x86_64.so" && return
+   [ -f "${APP_DIR}/bolt.so" ] && echo "${APP_DIR}/bolt.so" && return
+   ;;
+  aarch64|arm64)
+   [ -f "${APP_DIR}/bolt-aarch64.so" ] && echo "${APP_DIR}/bolt-aarch64.so" && return
+   [ -f "${APP_DIR}/bolt.so" ] && echo "${APP_DIR}/bolt.so" && return
+   ;;
+  *)
+   [ -f "${APP_DIR}/bolt.so" ] && echo "${APP_DIR}/bolt.so" && return
+   ;;
  esac
-}
-
-log_step() {
- echo -e "$1"
- echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: $2" | sudo tee -a /var/log/powerps_install.log >/dev/null
 }
 
 resolve_php_extension_dir() {
- local php_version="$1"
- local php_bin="php${php_version}"
  local php_ext_dir
-
- # Use -n so a broken phpBolt from a partial install cannot hang or crash PHP CLI.
- php_ext_dir="$(${php_bin} -n -i 2>/dev/null | awk -F'=> ' '/^extension_dir/{print $2; exit}')"
+ php_ext_dir="$("$(php_bin)" -n -i 2>/dev/null | awk -F'=> ' '/^extension_dir/{print $2; exit}')"
  if [ -z "${php_ext_dir}" ]; then
- case "${php_version}" in
- 8.4) php_ext_dir="/usr/lib/php/20240924" ;;
- 8.3) php_ext_dir="/usr/lib/php/20230831" ;;
- *) php_ext_dir="/usr/lib/php/${php_version}" ;;
- esac
+  case "${PHP_VERSION}" in
+   8.4) php_ext_dir="/usr/lib/php/20240924" ;;
+   8.3) php_ext_dir="/usr/lib/php/20230831" ;;
+   *) php_ext_dir="/usr/lib/php/${PHP_VERSION}" ;;
+  esac
  fi
  echo "${php_ext_dir}"
 }
 
-cleanup_stale_bolt_config() {
- local php_version="$1"
- local php_ext_dir="$2"
- local ini_file="/etc/php/${php_version}/mods-available/bolt.ini"
- local cli_conf_dir="/etc/php/${php_version}/cli/conf.d"
- local apache_conf_dir="/etc/php/${php_version}/apache2/conf.d"
-
- sudo rm -f \
-  "${cli_conf_dir}/99-bolt.ini" \
-  "${apache_conf_dir}/99-bolt.ini" \
-  "${cli_conf_dir}"/*bolt*.ini \
-  "${apache_conf_dir}"/*bolt*.ini \
-  "${ini_file}" \
-  "${php_ext_dir}/bolt.so" 2>/dev/null || true
- if command -v phpdismod >/dev/null 2>&1; then
-  sudo phpdismod -v "${php_version}" bolt 2>/dev/null || true
+install_phpbolt() {
+ if "$(php_bin)" -m 2>/dev/null | grep -qi '^bolt$'; then
+  log_info "phpBolt already loaded; skipping."
+  return 0
  fi
+
+ local bolt_src php_ext_dir cli_conf_dir apache_conf_dir bolt_ini_line
+ bolt_src="$(pick_bolt_source)"
+ [ -n "${bolt_src}" ] && [ -f "${bolt_src}" ] || die "bolt.so not found in ${APP_DIR}"
+
+ if ! "$(php_bin)" -n -d "extension=${bolt_src}" -r 'exit(function_exists("bolt_decrypt")?0:1);' 2>/dev/null; then
+  die "bolt binary is incompatible with $(php_bin)."
+ fi
+
+ php_ext_dir="$(resolve_php_extension_dir)"
+ cli_conf_dir="/etc/php/${PHP_VERSION}/cli/conf.d"
+ apache_conf_dir="/etc/php/${PHP_VERSION}/apache2/conf.d"
+ bolt_ini_line="extension=${php_ext_dir}/bolt.so"
+
+ log_info "Installing phpBolt from ${bolt_src}..."
+ sudo rm -f "${cli_conf_dir}"/*bolt*.ini "${apache_conf_dir}"/*bolt*.ini 2>/dev/null || true
+ sudo mkdir -p "${php_ext_dir}" "${cli_conf_dir}" "${apache_conf_dir}"
+ sudo cp "${bolt_src}" "${php_ext_dir}/bolt.so"
+ sudo chmod 644 "${php_ext_dir}/bolt.so"
+ echo "${bolt_ini_line}" | sudo tee "${cli_conf_dir}/99-bolt.ini" >/dev/null
+ echo "${bolt_ini_line}" | sudo tee "${apache_conf_dir}/99-bolt.ini" >/dev/null
+
+ if ! "$(php_bin)" -m 2>/dev/null | grep -qi '^bolt$'; then
+  die "phpBolt failed to load in $(php_bin)."
+ fi
+ log_info "phpBolt installed."
 }
 
-ensure_laravel_directories() {
- local app_dir="/var/www/html/laravel-app"
- local dir
+# ---------------------------------------------------------------------------
+# Repositories
+# ---------------------------------------------------------------------------
+update_laravel_repo() {
+ local backup_dir="/tmp/powerps-core-update-$(date +%Y%m%d%H%M%S)"
+ log_info "Updating powerps-core (git)..."
+ mkdir -p "${backup_dir}"
+ [ -f "${APP_DIR}/.env" ] && cp "${APP_DIR}/.env" "${backup_dir}/.env"
+ [ -d "${APP_DIR}/public/images/qrcodes" ] && cp -a "${APP_DIR}/public/images/qrcodes" "${backup_dir}/" || true
+ [ -d "${APP_DIR}/public/images/transaction_images" ] && cp -a "${APP_DIR}/public/images/transaction_images" "${backup_dir}/" || true
 
+ cd "${APP_DIR}"
+ git fetch origin main
+ git reset --hard origin/main
+
+ [ -f "${backup_dir}/.env" ] && cp "${backup_dir}/.env" "${APP_DIR}/.env"
+ if [ -d "${backup_dir}/qrcodes" ]; then
+  mkdir -p "${APP_DIR}/public/images/qrcodes"
+  cp -a "${backup_dir}/qrcodes/." "${APP_DIR}/public/images/qrcodes/"
+ fi
+ if [ -d "${backup_dir}/transaction_images" ]; then
+  mkdir -p "${APP_DIR}/public/images/transaction_images"
+  cp -a "${backup_dir}/transaction_images/." "${APP_DIR}/public/images/transaction_images/"
+ fi
+ rm -rf "${backup_dir}"
+}
+
+sync_laravel_repo() {
+ if [ -d "${APP_DIR}/.git" ]; then
+  update_laravel_repo
+ else
+  log_info "Cloning powerps-core..."
+  run_with_retry "git clone https://github.com/rezahajrahimi/powerps-core ${APP_DIR}" 3 5 \
+   || die "Failed to clone powerps-core."
+ fi
+ cd "${APP_DIR}"
+}
+
+sync_webapp_repo() {
+ local web_env_backup="/tmp/powerps-webapp-env-$(date +%Y%m%d%H%M%S)"
+ if [ -f "${WEBAPP_DIR}/assets/.env" ]; then
+  cp "${WEBAPP_DIR}/assets/.env" "${web_env_backup}"
+ fi
+
+ if [ -d "${WEBAPP_DIR}/.git" ]; then
+  log_info "Updating powerps-webapp (git)..."
+  cd "${WEBAPP_DIR}"
+  git fetch origin main
+  git reset --hard origin/main
+ else
+  log_info "Cloning powerps-webapp..."
+  run_with_retry "git clone https://github.com/rezahajrahimi/powerps-webapp ${WEBAPP_DIR}" 3 5 \
+   || die "Failed to clone powerps-webapp."
+ fi
+
+ mkdir -p "${WEBAPP_DIR}/assets"
+ if [ -f "${web_env_backup}" ]; then
+  cp "${web_env_backup}" "${WEBAPP_DIR}/assets/.env"
+  rm -f "${web_env_backup}"
+ else
+  echo "BASE_URL=https://${LARAVEL_SUBDOMAIN}" > "${WEBAPP_DIR}/assets/.env"
+ fi
+ sudo chown www-data:www-data "${WEBAPP_DIR}/assets/.env" 2>/dev/null || true
+ sudo chmod 640 "${WEBAPP_DIR}/assets/.env" 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------------------
+# Laravel app setup
+# ---------------------------------------------------------------------------
+ensure_laravel_directories() {
+ local dir
  for dir in \
-  "${app_dir}/storage" \
-  "${app_dir}/storage/app" \
-  "${app_dir}/storage/framework" \
-  "${app_dir}/storage/framework/cache" \
-  "${app_dir}/storage/framework/sessions" \
-  "${app_dir}/storage/framework/views" \
-  "${app_dir}/storage/logs" \
-  "${app_dir}/bootstrap/cache" \
-  "${app_dir}/public/images" \
-  "${app_dir}/public/images/qrcodes" \
-  "${app_dir}/public/images/transaction_images"
+  "${APP_DIR}/storage" "${APP_DIR}/storage/app" \
+  "${APP_DIR}/storage/framework" "${APP_DIR}/storage/framework/cache" \
+  "${APP_DIR}/storage/framework/sessions" "${APP_DIR}/storage/framework/views" \
+  "${APP_DIR}/storage/logs" "${APP_DIR}/bootstrap/cache" \
+  "${APP_DIR}/public/images" "${APP_DIR}/public/images/qrcodes" \
+  "${APP_DIR}/public/images/transaction_images"
  do
   sudo mkdir -p "${dir}"
  done
 }
 
-# Configure phpBolt extension for Apache and CLI
-configure_bolt() {
- local php_version="$1"
- local bolt_src
- local bolt_test_err
- local php_ext_dir
- local php_bin="php${php_version}"
- local ini_file="/etc/php/${php_version}/mods-available/bolt.ini"
- local cli_conf_dir="/etc/php/${php_version}/cli/conf.d"
- local apache_conf_dir="/etc/php/${php_version}/apache2/conf.d"
- local bolt_ini_line
-
- if ! command -v "${php_bin}" >/dev/null 2>&1; then
- echo -e "${RED}Error: ${php_bin} is not installed.${NC}"
- exit 1
- fi
-
- php_ext_dir="$(resolve_php_extension_dir "${php_version}")"
- cleanup_stale_bolt_config "${php_version}" "${php_ext_dir}"
-
- bolt_src="$(pick_bolt_source)"
- if [ -z "${bolt_src}" ] || [ ! -f "${bolt_src}" ]; then
- echo -e "${RED}Error: bolt.so not found in /var/www/html/laravel-app (bolt.so, bolt-x86_64.so, bolt-aarch64.so).${NC}"
- echo -e "${YELLOW}Run install again after powerps-core is fully cloned, or restore bolt*.so from the repo.${NC}"
- exit 1
- fi
-
- bolt_test_err="$(${php_bin} -n -d "extension=${bolt_src}" -r 'exit(function_exists("bolt_decrypt")?0:1);' 2>&1)" || {
- echo -e "${RED}Error: bolt binary is incompatible with ${php_bin}.${NC}"
- if [ -n "${bolt_test_err}" ]; then
- echo -e "${YELLOW}${bolt_test_err}${NC}"
- fi
- exit 1
- }
-
- echo -e "${GREEN}Configuring phpBolt (${bolt_src}) for PHP ${php_version}...${NC}"
- echo -e "${CYAN}phpBolt is bundled in powerps-core repo (not downloaded separately).${NC}"
- sudo mkdir -p "${php_ext_dir}"
- sudo cp "${bolt_src}" "${php_ext_dir}/bolt.so"
- sudo chmod 644 "${php_ext_dir}/bolt.so"
-
- bolt_ini_line="extension=${php_ext_dir}/bolt.so"
-
- # Write conf.d directly for CLI and Apache (do not also phpenmod or bolt loads twice).
- sudo mkdir -p "${cli_conf_dir}" "${apache_conf_dir}"
- echo "${bolt_ini_line}" | sudo tee "${cli_conf_dir}/99-bolt.ini" >/dev/null
- echo "${bolt_ini_line}" | sudo tee "${apache_conf_dir}/99-bolt.ini" >/dev/null
-
- bolt_count="$(${php_bin} -m 2>&1 | grep -ci '^bolt$' || true)"
- if [ "${bolt_count}" -gt 1 ]; then
- echo -e "${YELLOW}Warning: phpBolt loaded ${bolt_count} times; cleaning duplicate bolt ini files...${NC}"
- cleanup_stale_bolt_config "${php_version}" "${php_ext_dir}"
- echo "${bolt_ini_line}" | sudo tee "${cli_conf_dir}/99-bolt.ini" >/dev/null
- echo "${bolt_ini_line}" | sudo tee "${apache_conf_dir}/99-bolt.ini" >/dev/null
- fi
-
- if ! ${php_bin} -m 2>/dev/null | grep -qi '^bolt$'; then
- echo -e "${RED}Error: phpBolt is not loading for ${php_bin}.${NC}"
- echo -e "${YELLOW}Debug:${NC}"
- ${php_bin} -m 2>&1 | tail -5 || true
- ${php_bin} --ini 2>&1 | head -10 || true
- ls -la "${php_ext_dir}/bolt.so" 2>/dev/null || true
- exit 1
- fi
- echo -e "${GREEN}phpBolt verified for ${php_bin}.${NC}"
-}
-
-# Make the PowerPs PHP version the default `php` binary (artisan uses /usr/bin/env php)
-ensure_php_default() {
- local php_version="$1"
- local php_bin="/usr/bin/php${php_version}"
- local default_php_path default_php_real php_bin_real
-
- if [ ! -x "${php_bin}" ]; then
- echo -e "${RED}Error: ${php_bin} not found.${NC}"
- exit 1
- fi
-
- if ! "${php_bin}" -m 2>/dev/null | grep -qi '^bolt$'; then
- echo -e "${RED}Error: ${php_bin} does not load phpBolt.${NC}"
- exit 1
- fi
-
- sudo update-alternatives --install /usr/bin/php php "${php_bin}" 100 2>/dev/null || true
- sudo update-alternatives --set php "${php_bin}" 2>/dev/null || true
- sudo ln -sfn "${php_bin}" /usr/bin/php 2>/dev/null || true
-
- php_bin_real="$(readlink -f "${php_bin}")"
- default_php_path="$(command -v php 2>/dev/null || true)"
- default_php_real=""
- if [ -n "${default_php_path}" ]; then
- default_php_real="$(readlink -f "${default_php_path}" 2>/dev/null || true)"
- fi
-
- if [ -n "${default_php_real}" ] && [ "${default_php_real}" != "${php_bin_real}" ]; then
- echo -e "${YELLOW}Default php (${default_php_path}) differs from ${php_bin}; fixing symlinks...${NC}"
- if [ "${default_php_path}" = "/usr/local/bin/php" ] || [ "${default_php_path#"/usr/local/"}" != "${default_php_path}" ]; then
- sudo ln -sfn "${php_bin}" /usr/local/bin/php 2>/dev/null || true
- fi
- sudo ln -sfn "${php_bin}" /usr/bin/php 2>/dev/null || true
- hash -r 2>/dev/null || true
- default_php_path="$(command -v php 2>/dev/null || true)"
- default_php_real="$(readlink -f "${default_php_path}" 2>/dev/null || true)"
- fi
-
- if [ -n "${default_php_real}" ] && [ "${default_php_real}" = "${php_bin_real}" ] && php -m 2>/dev/null | grep -qi '^bolt$'; then
- echo -e "${GREEN}Default php is ${php_bin} with phpBolt loaded.${NC}"
- return 0
- fi
-
- echo -e "${YELLOW}Warning: generic 'php' command may not load phpBolt, but ${php_bin} is OK.${NC}"
- echo -e "${YELLOW}Install will continue using ${php_bin} for artisan/composer.${NC}"
- if [ -n "${default_php_path}" ]; then
- echo -e "${YELLOW}Current php: $(php -v 2>/dev/null | head -1) (${default_php_path})${NC}"
- fi
-}
-
-# Re-configure phpBolt if missing (e.g. partial install or PHP package refresh)
-verify_bolt_or_configure() {
- local php_version="$1"
- local php_bin="php${php_version}"
- if ${php_bin} -m 2>/dev/null | grep -qi '^bolt$'; then
- return 0
- fi
- echo -e "${YELLOW}phpBolt not loaded; configuring now...${NC}"
- configure_bolt "${php_version}"
- ensure_php_default "${php_version}"
-}
-
-# run command with retries
-run_with_retry() {
- local cmd="$1"
- local retries=${2:-3}
- local delay=${3:-5}
- local attempt=1
- until eval "$cmd"; do
- if [ "$attempt" -ge "$retries" ]; then
- echo -e "${RED}Command failed after ${attempt} attempts: $cmd${NC}"
- return 1
- fi
- echo "Attempt ${attempt} failed; retrying in ${delay}s..."
- attempt=$((attempt + 1))
- sleep "$delay"
- done
- return 0
-}
-
-ensure_ondrej_php_ppa() {
- local codename=""
-
- if grep -Rqs 'ppa.launchpadcontent.net/ondrej/php' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; then
- echo -e "${GREEN}ondrej/php PPA already configured; skipping add-apt-repository.${NC}"
- return 0
- fi
-
- codename="$(. /etc/os-release 2>/dev/null && echo "${VERSION_CODENAME:-}")"
- if [ -z "${codename}" ]; then
- codename="$(lsb_release -sc 2>/dev/null || true)"
- fi
-
- echo -e "${GREEN}Adding ondrej/php PPA...${NC}"
- if sudo add-apt-repository -y ppa:ondrej/php 2>/dev/null; then
- return 0
- fi
-
- echo -e "${YELLOW}add-apt-repository failed (often DNS/Launchpad). Adding PPA list directly...${NC}"
- if [ -z "${codename}" ]; then
- echo -e "${RED}Could not detect Ubuntu codename for ondrej/php PPA.${NC}"
- exit 1
- fi
-
- echo "deb https://ppa.launchpadcontent.net/ondrej/php/ubuntu ${codename} main" | \
- sudo tee "/etc/apt/sources.list.d/ondrej-ubuntu-php-${codename}.list" >/dev/null
+fix_laravel_permissions() {
+ log_info "Setting Laravel permissions..."
+ ensure_laravel_directories
+ sudo chown -R www-data:www-data "${APP_DIR}/storage" "${APP_DIR}/bootstrap/cache" \
+  "${APP_DIR}/public" "${APP_DIR}/public/images" 2>/dev/null || true
+ sudo chmod -R 775 "${APP_DIR}/storage" "${APP_DIR}/bootstrap/cache" \
+  "${APP_DIR}/public" "${APP_DIR}/public/images" 2>/dev/null || true
 }
 
 sanitize_release_composer_json() {
  local composer_file="$1"
  [ -f "${composer_file}" ] || return 0
-
- php -r '
+ "$(php_bin)" -r '
 $path = $argv[1];
 $data = json_decode(file_get_contents($path), true);
 if (!is_array($data)) { exit(1); }
@@ -529,698 +678,79 @@ if (isset($data["autoload-dev"]["psr-4"]["sbamtr\\LaravelSourceEncrypter\\"])) {
 }
 if (!empty($data["repositories"])) {
  $data["repositories"] = array_values(array_filter(
- $data["repositories"],
- fn($repo) => ($repo["type"] ?? "") !== "path"
+  $data["repositories"],
+  fn($repo) => ($repo["type"] ?? "") !== "path"
  ));
 }
-file_put_contents(
- $path,
- json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n"
-);
+file_put_contents($path, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
 ' "${composer_file}"
 }
 
-prepare_composer_for_install() {
- local app_dir="/var/www/html/laravel-app"
- local composer_bin="/usr/bin/composer"
-
- cd "${app_dir}" || exit 1
-
- if ! php${PHP_VERSION} "${composer_bin}" validate --no-check-publish --no-interaction >/dev/null 2>&1; then
- echo -e "${YELLOW}Composer files out of sync; removing build-only dev dependencies from composer.json...${NC}"
- sanitize_release_composer_json "${app_dir}/composer.json"
- php${PHP_VERSION} "${composer_bin}" update --lock --no-install --no-dev --no-interaction --ignore-platform-reqs --no-scripts >/dev/null 2>&1 || true
- fi
-}
-
 install_composer_dependencies() {
- local app_dir="/var/www/html/laravel-app"
- local composer_bin="/usr/bin/composer"
- local install_cmd="php${PHP_VERSION} ${composer_bin} install --no-dev --no-interaction --no-progress --prefer-dist --optimize-autoloader --no-scripts"
+ log_info "Installing Composer dependencies..."
+ cd "${APP_DIR}"
+ export COMPOSER_ALLOW_SUPERUSER=1
 
- cd "${app_dir}" || exit 1
- prepare_composer_for_install
+ if ! "$(php_bin)" "${COMPOSER_BIN}" validate --no-check-publish --no-interaction >/dev/null 2>&1; then
+  log_warn "Composer lock out of sync; fixing composer.json for production..."
+  sanitize_release_composer_json "${APP_DIR}/composer.json"
+  "$(php_bin)" "${COMPOSER_BIN}" update --lock --no-install --no-dev --no-interaction \
+   --ignore-platform-reqs --no-scripts >/dev/null 2>&1 || true
+ fi
 
- echo -e "${GREEN}Installing Composer dependencies...${NC}"
- run_with_retry "${install_cmd}" 3 5 || {
- echo -e "${RED}Composer install failed. Trying with --ignore-platform-reqs...${NC}"
- run_with_retry "${install_cmd} --ignore-platform-reqs" 3 5 || {
- echo -e "${RED}Composer install failed even with --ignore-platform-reqs${NC}"
- echo -e "${YELLOW}Run manually: cd ${app_dir} && php${PHP_VERSION} ${composer_bin} validate${NC}"
- exit 1
- }
- }
+ local install_cmd
+ install_cmd="$(php_bin) ${COMPOSER_BIN} install --no-dev --no-interaction --no-progress --prefer-dist --optimize-autoloader --no-scripts"
 
- php${PHP_VERSION} "${composer_bin}" dump-autoload --no-dev --optimize --no-interaction --ignore-platform-reqs >/dev/null 2>&1 || true
+ if ! run_with_retry "${install_cmd}" 3 5; then
+  log_warn "Composer install failed; retrying with --ignore-platform-reqs..."
+  run_with_retry "${install_cmd} --ignore-platform-reqs" 3 5 \
+   || die "Composer install failed. Run: cd ${APP_DIR} && $(php_bin) ${COMPOSER_BIN} validate"
+ fi
+
+ "$(php_bin)" "${COMPOSER_BIN}" dump-autoload --no-dev --optimize --no-interaction \
+  --ignore-platform-reqs --no-scripts >/dev/null 2>&1 || true
 }
 
-# Function to setup SSL certificates
-setup_ssl() {
- echo -e "${GREEN}Obtaining TLS certificates for ${LARAVEL_SUBDOMAIN} and ${HTML5_SUBDOMAIN}...${NC}"
- 
- # Ensure certbot is installed
- if ! command -v certbot >/dev/null 2>&1; then
- echo -e "${YELLOW}Certbot not found. Installing...${NC}"
- sudo apt-get update
- sudo apt-get install -y python3-certbot-apache certbot
- fi
+run_laravel_artisan_steps() {
+ log_info "Running Laravel setup (key, migrate, storage)..."
+ cd "${APP_DIR}"
 
- # Use default email if user leaves empty
- read -e -p "Enter email for Let's Encrypt notifications (press Enter to use admin@${LARAVEL_SUBDOMAIN#*.}): " CERTBOT_EMAIL
- if [ -z "${CERTBOT_EMAIL}" ]; then
- CERTBOT_EMAIL="admin@${LARAVEL_SUBDOMAIN#*.}"
- fi
- for domain in "${LARAVEL_SUBDOMAIN}" "${HTML5_SUBDOMAIN}"; do
- if [ -d "/etc/letsencrypt/live/${domain}" ]; then
- echo -e "${YELLOW}Certificate already exists for ${domain}, skipping...${NC}"
- continue
- fi
- run_with_retry "sudo certbot --apache --non-interactive --agree-tos --email ${CERTBOT_EMAIL} -d ${domain} --redirect" 3 5 || {
- echo -e "${YELLOW}Warning: Failed to obtain certificate for ${domain}. Please run: sudo certbot --apache -d ${domain} --email ${CERTBOT_EMAIL} --agree-tos --redirect${NC}"
- echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: Failed to obtain certificate for ${domain}" | sudo tee -a /var/log/powerps_install.log >/dev/null
- }
- done
-}
-
-# Pretty title
-echo -e "${CYAN}==============================${NC}"
-echo -e "${YELLOW} Setting up or Updating your core and WebApp PowerPs${NC}"
-echo -e "${CYAN}==============================${NC}"
-
-# Run requirement checks
-check_requirements() {
- # بررسی فضای دیسک
- free_space=$(df -m / | awk 'NR==2 {print $4}')
- if [ "$free_space" -lt 1000 ]; then
- echo -e "${RED}Not enough disk space. At least 1GB required${NC}"
- exit 1
- fi
- 
- # بررسی رم
- total_ram=$(free -m | awk '/^Mem:/{print $2}')
- if [ "$total_ram" -lt 256 ]; then
- echo -e "${YELLOW}Warning: Less than 256MB RAM available${NC}"
- fi
-}
-check_requirements
-
-# Persisted state directory (do NOT depend on current working directory)
-STATE_DIR="/var/lib/powerps"
-SUBDOMAIN_FILE="${STATE_DIR}/subdomains.conf"
-
-# Ensure state dir exists (works for sudo bash -c ...)
-sudo mkdir -p "${STATE_DIR}"
-sudo chown "$(whoami)":"$(whoami)" "${STATE_DIR}" 2>/dev/null || true
-
-# --- Detect existing install (subdomains.conf, legacy paths, Apache, .env) ---
-load_subdomains_from_file() {
- local file="$1"
- if [ ! -f "$file" ]; then
- return 1
- fi
- # shellcheck disable=SC1090
- source "$file"
- if [ -n "${LARAVEL_SUBDOMAIN:-}" ] && [ -n "${HTML5_SUBDOMAIN:-}" ]; then
- return 0
- fi
- return 1
-}
-
-persist_subdomains() {
- echo "LARAVEL_SUBDOMAIN=$LARAVEL_SUBDOMAIN" | sudo tee "$SUBDOMAIN_FILE" >/dev/null
- echo "HTML5_SUBDOMAIN=$HTML5_SUBDOMAIN" | sudo tee -a "$SUBDOMAIN_FILE" >/dev/null
-}
-
-detect_subdomains_from_apache() {
- local core_conf="/etc/apache2/sites-available/powerps-core.conf"
- local web_conf="/etc/apache2/sites-available/powerps-webapp.conf"
- if [ -f "$core_conf" ]; then
- LARAVEL_SUBDOMAIN=$(grep -E '^\s*ServerName\s+' "$core_conf" 2>/dev/null | awk '{print $2}' | head -1)
- fi
- if [ -f "$web_conf" ]; then
- HTML5_SUBDOMAIN=$(grep -E '^\s*ServerName\s+' "$web_conf" 2>/dev/null | awk '{print $2}' | head -1)
- fi
-}
-
-strip_url_host() {
- local url="$1"
- url="${url#https://}"
- url="${url#http://}"
- url="${url%%/*}"
- echo "$url"
-}
-
-detect_subdomains_from_env() {
- local env_file="/var/www/html/laravel-app/.env"
- if [ ! -f "$env_file" ]; then
- return 1
- fi
- local app_url front_url
- app_url=$(grep -m1 '^APP_URL=' "$env_file" | cut -d= -f2- | tr -d '"' | tr -d "'")
- front_url=$(grep -m1 '^FRONT_URL=' "$env_file" | cut -d= -f2- | tr -d '"' | tr -d "'")
- if [ -n "$app_url" ]; then
- LARAVEL_SUBDOMAIN=$(strip_url_host "$app_url")
- fi
- if [ -n "$front_url" ]; then
- HTML5_SUBDOMAIN=$(strip_url_host "$front_url")
- fi
-}
-
-powerps_is_installed() {
- [ -d "/var/www/html/laravel-app/.git" ] || [ -d "/var/www/html/laravel-app" ]
-}
-
-show_powerps_menu() {
- echo -e "${YELLOW}Subdomains are already set (${LARAVEL_SUBDOMAIN}, ${HTML5_SUBDOMAIN}).${NC}"
- echo -e "${CYAN}Please choose an option:${NC}"
- echo "1) Install / Update"
- echo "2) Uninstall"
- echo "3) SSL Certificate (Certbot)"
- while true; do
- read -p "Enter choice [1-3]: " choice
- case $choice in
- 1)
- echo -e "${GREEN}Proceeding with Installation...${NC}"
- return 0
- ;;
- 2)
- echo -e "${GREEN}Starting uninstallation process...${NC}"
- # 1. Stop running services
- echo -e "${GREEN}Stopping services...${NC}"
- sudo pkill -f artisan || true
- sudo pkill -f "php artisan" || true
- if systemctl list-unit-files | grep -q '^laravel-queue\.service'; then
- echo -e "${GREEN}Stopping and removing Laravel Queue Service...${NC}"
- sudo systemctl stop laravel-queue || true
- sudo systemctl disable laravel-queue || true
- sudo rm -f /etc/systemd/system/laravel-queue.service || true
- sudo systemctl daemon-reload || true
- fi
- echo -e "${GREEN}Removing Laravel application...${NC}"
- DB_NAME_LOCAL=""
- DB_USER_LOCAL=""
- if [ -f "/var/www/html/laravel-app/.env" ]; then
- DB_NAME_LOCAL=$(grep '^DB_DATABASE=' /var/www/html/laravel-app/.env | cut -d'=' -f2)
- DB_USER_LOCAL=$(grep '^DB_USERNAME=' /var/www/html/laravel-app/.env | cut -d'=' -f2)
- fi
- if [ -d "/var/www/html/laravel-app" ]; then
- backup_existing "/var/www/html/laravel-app"
- sudo rm -rf /var/www/html/laravel-app || true
- fi
- echo -e "${GREEN}Removing WebApp...${NC}"
- if [ -d "/var/www/html/powerps-webapp" ]; then
- backup_existing "/var/www/html/powerps-webapp"
- sudo rm -rf /var/www/html/powerps-webapp || true
- fi
- echo -e "${GREEN}Removing database and user...${NC}"
- DB_NAME_LOCAL=${DB_NAME_LOCAL:-powerps_db}
- DB_USER_LOCAL=${DB_USER_LOCAL:-powerps_user}
- sudo mysql -e "DROP DATABASE IF EXISTS ${DB_NAME_LOCAL};" || true
- sudo mysql -e "DROP USER IF EXISTS '${DB_USER_LOCAL}'@'localhost';" || true
- sudo mysql -e "FLUSH PRIVILEGES;" || true
- echo -e "${GREEN}Removing Apache configurations...${NC}"
- if [ -f "/etc/apache2/sites-available/powerps-core.conf" ]; then
- sudo a2dissite powerps-core || true
- sudo rm -f /etc/apache2/sites-available/powerps-core.conf || true
- fi
- if [ -f "/etc/apache2/sites-available/powerps-webapp.conf" ]; then
- sudo a2dissite powerps-webapp || true
- sudo rm -f /etc/apache2/sites-available/powerps-webapp.conf || true
- fi
- echo -e "${GREEN}Restarting Apache...${NC}"
- sudo systemctl restart apache2 || true
- if [ -d "/var/www/html/phpmyadmin" ]; then
- echo -e "${GREEN}Removing PHPMyAdmin...${NC}"
- sudo rm -rf /var/www/html/phpmyadmin || true
- fi
- echo -e "${GREEN}Removing cron jobs...${NC}"
- crontab -l 2>/dev/null | grep -v 'laravel-app' | grep -v 'powerps' | grep -v 'artisan' | crontab - || true
- if [ -f "$SUBDOMAIN_FILE" ]; then
- rm -f "$SUBDOMAIN_FILE" || true
- fi
- if [ -n "${LARAVEL_SUBDOMAIN:-}" ] && [ -n "${HTML5_SUBDOMAIN:-}" ]; then
- sudo sed -i "/${LARAVEL_SUBDOMAIN}/d" /etc/hosts || true
- sudo sed -i "/${HTML5_SUBDOMAIN}/d" /etc/hosts || true
- fi
- sudo rm -f /var/log/laravel-queue.log /var/log/laravel-queue.error.log || true
- if systemctl list-unit-files | grep -q '^certbot-renew\.timer'; then
- echo -e "${GREEN}Stopping and removing certbot renewal timer/service...${NC}"
- sudo systemctl stop certbot-renew.timer || true
- sudo systemctl disable certbot-renew.timer || true
- sudo rm -f /etc/systemd/system/certbot-renew.timer /etc/systemd/system/certbot-renew.service || true
- sudo systemctl daemon-reload || true
- fi
- if command -v certbot >/dev/null 2>&1; then
- read -r -p "Also delete Let's Encrypt certs for ${LARAVEL_SUBDOMAIN} and ${HTML5_SUBDOMAIN}? (y/N): " DELCERTS
- if [[ "$DELCERTS" =~ ^[Yy]$ ]]; then
- sudo certbot delete --cert-name "${LARAVEL_SUBDOMAIN}" || true
- sudo certbot delete --cert-name "${HTML5_SUBDOMAIN}" || true
- fi
- fi
- sudo rm -f /root/.mysql_root_pass || true
- echo -e "${GREEN}Uninstallation completed successfully!${NC}"
- exit 0
- ;;
- 3)
- setup_ssl
- echo -e "${GREEN}SSL setup process finished.${NC}"
- exit 0
- ;;
- *)
- echo -e "${RED}Invalid option. Please enter 1, 2, or 3.${NC}"
- ;;
- esac
- done
-}
-
-prompt_for_subdomains() {
- while true; do
- read -e -p "Enter your Core subdomain (e.g., core.domain.com): " LARAVEL_SUBDOMAIN
- if [[ $LARAVEL_SUBDOMAIN =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$ ]]; then
- break
+ if grep -qE '^APP_KEY=base64:.+' "${LARAVEL_ENV_FILE}"; then
+  log_info "APP_KEY already set; skipping key generation."
  else
- echo -e "${YELLOW}Invalid domain format. Please try again.${NC}"
+  "$(php_bin)" artisan key:generate --force --no-interaction
  fi
- done
- while true; do
- read -e -p "Enter your WebApp subdomain (e.g., web.domain.com): " HTML5_SUBDOMAIN
- if [[ $HTML5_SUBDOMAIN =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$ ]]; then
- break
- else
- echo -e "${YELLOW}Invalid domain format. Please try again.${NC}"
+
+ if ! "$(php_bin)" artisan migrate --force --no-interaction; then
+  die "Migration failed. Check DB credentials in ${LARAVEL_ENV_FILE}"
  fi
- done
- persist_subdomains
+
+ "$(php_bin)" artisan storage:link --force --no-interaction 2>/dev/null || true
 }
 
-LARAVEL_SUBDOMAIN=""
-HTML5_SUBDOMAIN=""
-
-if load_subdomains_from_file "$SUBDOMAIN_FILE"; then
- :
-else
- for legacy in "/root/subdomains.conf" "$HOME/subdomains.conf" "./subdomains.conf"; do
- if load_subdomains_from_file "$legacy"; then
- echo -e "${CYAN}Migrating subdomains from ${legacy} -> ${SUBDOMAIN_FILE}${NC}"
- persist_subdomains
- break
- fi
- done
-fi
-
-if { [ -z "${LARAVEL_SUBDOMAIN:-}" ] || [ -z "${HTML5_SUBDOMAIN:-}" ]; } && powerps_is_installed; then
- detect_subdomains_from_apache
- if [ -z "${LARAVEL_SUBDOMAIN:-}" ] || [ -z "${HTML5_SUBDOMAIN:-}" ]; then
- detect_subdomains_from_env
- fi
- if [ -n "${LARAVEL_SUBDOMAIN:-}" ] && [ -n "${HTML5_SUBDOMAIN:-}" ]; then
- persist_subdomains
- echo -e "${CYAN}Detected existing install from server config (${LARAVEL_SUBDOMAIN}, ${HTML5_SUBDOMAIN})${NC}"
- fi
-fi
-
-if [ -n "${LARAVEL_SUBDOMAIN:-}" ] && [ -n "${HTML5_SUBDOMAIN:-}" ]; then
- show_powerps_menu
-elif powerps_is_installed; then
- echo -e "${YELLOW}PowerPs is installed but subdomains were not found.${NC}"
- echo -e "${YELLOW}Enter them once; they will be saved to ${SUBDOMAIN_FILE}${NC}"
- prompt_for_subdomains
- show_powerps_menu
-else
- prompt_for_subdomains
-fi
-# Update package lists and install necessary packages
-echo -e "${GREEN}Updating package lists and installing necessary packages...${NC}"
-sudo apt-get update
-sudo apt-get install -y software-properties-common curl openssl
-ensure_ondrej_php_ppa
-sudo apt-get update
-
-# Install PHP and specific extensions (version detected after clone/update)
-PHP_VERSION="${PHP_VERSION:-8.4}"
-echo -e "${GREEN}Installing PHP ${PHP_VERSION} and required packages...${NC}"
-sudo apt-get install -y apache2 mysql-server \
- "php${PHP_VERSION}" "php${PHP_VERSION}-mysql" "libapache2-mod-php${PHP_VERSION}" "php${PHP_VERSION}-cli" "php${PHP_VERSION}-zip" \
- "php${PHP_VERSION}-xml" "php${PHP_VERSION}-dom" "php${PHP_VERSION}-mbstring" "php${PHP_VERSION}-curl" "php${PHP_VERSION}-gd" \
- "php${PHP_VERSION}-bcmath" "php${PHP_VERSION}-intl" "php${PHP_VERSION}-imagick" "php${PHP_VERSION}-readline" \
- php-imagick libmagickwand-dev composer unzip git expect \
- python3-certbot-apache certbot || {
- echo -e "${RED}خطا در نصب پکیج‌ها${NC}"
- exit 1
-}
-
-# Force selected PHP version as default
-echo -e "${GREEN}Setting PHP ${PHP_VERSION} as default...${NC}"
-sudo update-alternatives --set php "/usr/bin/php${PHP_VERSION}" || true
-sudo a2enmod "php${PHP_VERSION}" || true
-sudo systemctl restart apache2
-
-# Ensure MySQL is running
-echo -e "${GREEN}Ensuring MySQL service is running...${NC}"
-# Create socket directory if it doesn't exist (common issue in some environments)
-sudo mkdir -p /var/run/mysqld
-sudo chown mysql:mysql /var/run/mysqld
-
-# Try to start MySQL with a fallback to re-configuration
-if ! sudo systemctl start mysql; then
- echo -e "${YELLOW}MySQL failed to start. Attempting to fix dependencies and re-configure...${NC}"
- sudo apt-get install -f -y
- sudo dpkg --configure -a
- sudo systemctl daemon-reload
- 
- # Try starting again
- if ! sudo systemctl start mysql; then
- echo -e "${RED}MySQL still failing to start. Checking logs for clues...${NC}"
- if [ -f /var/log/mysql/error.log ]; then
- sudo tail -n 20 /var/log/mysql/error.log
- else
- sudo journalctl -xeu mysql.service --no-pager | tail -n 20
- fi
- exit 1
- fi
-fi
-sudo systemctl enable mysql
-
-# Wait for MySQL socket to be available
-echo -e "${GREEN}Waiting for MySQL socket...${NC}"
-for i in {1..30}; do
- if [ -S /var/run/mysqld/mysqld.sock ] || [ -S /var/lib/mysql/mysql.sock ]; then
- break
- fi
- echo -n "."
- sleep 1
-done
-echo
-
-# Secure MySQL Installation using expect
-echo -e "${GREEN}Securing MySQL Installation...${NC}"
-
-# Check if we already have a saved root password
-if [ -f /root/.mysql_root_pass ]; then
- EXISTING_ROOT_PASS=$(sudo cat /root/.mysql_root_pass)
- echo -e "${YELLOW}Existing MySQL root password found in /root/.mysql_root_pass.${NC}"
-fi
-
-# Prompt for MySQL root password
-read -s -e -p "Enter desired MySQL root password (leave empty to use existing or generate one): " MYSQL_ROOT_PASSWORD
-echo
-
-if [ -z "${MYSQL_ROOT_PASSWORD}" ]; then
- if [ -n "${EXISTING_ROOT_PASS:-}" ]; then
- MYSQL_ROOT_PASSWORD="${EXISTING_ROOT_PASS}"
- echo "Using existing MySQL root password."
- else
- MYSQL_ROOT_PASSWORD=$(openssl rand -base64 16)
- echo "Generated new MySQL root password: (will be saved to /root/.mysql_root_pass)"
- echo "${MYSQL_ROOT_PASSWORD}" | sudo tee /root/.mysql_root_pass >/dev/null
- sudo chmod 600 /root/.mysql_root_pass
- fi
-else
- # Update the saved password file if user provided a new one
- echo "${MYSQL_ROOT_PASSWORD}" | sudo tee /root/.mysql_root_pass >/dev/null
- sudo chmod 600 /root/.mysql_root_pass
-fi
-
-# Use expect to automate mysql_secure_installation
-# We handle both cases: no password set yet, or password already set
-SECURE_MYSQL=$(expect -c "
-set timeout 10
-spawn sudo mysql_secure_installation
-expect {
- \"Enter password for user root:\" {
- send \"${MYSQL_ROOT_PASSWORD}\r\"
- exp_continue
- }
- \"Enter current password for root\" {
- send \"${MYSQL_ROOT_PASSWORD}\r\"
- exp_continue
- }
- \"VALIDATE PASSWORD COMPONENT\" {
- send \"n\r\"
- exp_continue
- }
- \"New password:\" {
- send \"${MYSQL_ROOT_PASSWORD}\r\"
- exp_continue
- }
- \"Re-enter new password:\" {
- send \"${MYSQL_ROOT_PASSWORD}\r\"
- exp_continue
- }
- \"Change the password for root?\" {
- send \"n\r\"
- exp_continue
- }
- \"Do you wish to continue with the password provided?\" {
- send \"y\r\"
- exp_continue
- }
- \"Remove anonymous users?\" {
- send \"y\r\"
- exp_continue
- }
- \"Disallow root login remotely?\" {
- send \"y\r\"
- exp_continue
- }
- \"Remove test database and access to it?\" {
- send \"y\r\"
- exp_continue
- }
- \"Reload privilege tables now?\" {
- send \"y\r\"
- exp_continue
- }
- eof
-}
-")
-echo "$SECURE_MYSQL"
-# Do not log or print the MySQL root password anywhere else
-
-# Create MySQL database and user
-DB_NAME='powerps_db'
-DB_USER='powerps_user'
-
-# Check if .env already exists to reuse password
-if [ -f "/var/www/html/laravel-app/.env" ]; then
- echo -e "${YELLOW}Existing .env found. Extracting database credentials...${NC}"
- DB_PASS=$(grep '^DB_PASSWORD=' /var/www/html/laravel-app/.env | cut -d'=' -f2)
-fi
-
-# If DB_PASS is still empty (no .env or no password in it), generate new one
-if [ -z "${DB_PASS:-}" ]; then
- DB_PASS=$(openssl rand -base64 12)
-fi
-
-echo -e "${GREEN}Creating MySQL database and user (if not exists)...${NC}"
-sudo mysql -e "CREATE DATABASE IF NOT EXISTS ${DB_NAME};" || check_command "Failed to create database ${DB_NAME}"
-sudo mysql -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';" || check_command "Failed to create database user ${DB_USER}"
-# Update password in case it changed or user existed with different pass
-sudo mysql -e "ALTER USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';" || check_command "Failed to update database user password"
-sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';" || check_command "Failed to grant privileges on ${DB_NAME}"
-sudo mysql -e "FLUSH PRIVILEGES;" || check_command "Failed to flush privileges"
-
-# Check if the Laravel project directory exists
-if [ -d "/var/www/html/laravel-app/.git" ]; then
- update_powerps_core_repo
- cd /var/www/html/laravel-app
-else
- # Clone the Laravel project repository
- echo -e "${GREEN}Cloning Laravel project repository...${NC}"
- run_with_retry "git clone https://github.com/rezahajrahimi/powerps-core /var/www/html/laravel-app" 3 5 || {
- echo -e "${RED}خطا در کلون کردن مخزن${NC}"
- echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: Failed to clone laravel repository" | sudo tee -a /var/log/powerps_install.log >/dev/null
- exit 1
- }
- cd /var/www/html/laravel-app
-fi
-
-PHP_VERSION="$(detect_php_version)"
-export PATH="/usr/bin:/bin:/sbin:${PATH}"
-echo -e "${GREEN}Detected PowerPs release target: PHP ${PHP_VERSION}${NC}"
-if [ -f "/var/www/html/laravel-app/.powerps-bolt-version" ]; then
- echo -e "${GREEN}phpBolt version: $(tr -d '[:space:]' < /var/www/html/laravel-app/.powerps-bolt-version)${NC}"
-fi
-
-# Ensure required PHP version is installed (supports upgrades from older releases)
-sudo apt-get install -y \
- "php${PHP_VERSION}" "php${PHP_VERSION}-mysql" "libapache2-mod-php${PHP_VERSION}" "php${PHP_VERSION}-cli" "php${PHP_VERSION}-zip" \
- "php${PHP_VERSION}-xml" "php${PHP_VERSION}-dom" "php${PHP_VERSION}-mbstring" "php${PHP_VERSION}-curl" "php${PHP_VERSION}-gd" \
- "php${PHP_VERSION}-bcmath" "php${PHP_VERSION}-intl" "php${PHP_VERSION}-imagick" "php${PHP_VERSION}-readline" || {
- echo -e "${RED}Failed to install PHP ${PHP_VERSION} packages${NC}"
- exit 1
-}
-sudo update-alternatives --set php "/usr/bin/php${PHP_VERSION}" || true
-sudo a2enmod "php${PHP_VERSION}" || true
-
-# Configure Bolt extension
-log_step "${GREEN}Preparing phpBolt for PHP ${PHP_VERSION}...${NC}" "Starting configure_bolt for PHP ${PHP_VERSION}"
-configure_bolt "${PHP_VERSION}"
-ensure_php_default "${PHP_VERSION}"
-log_step "${GREEN}phpBolt setup finished.${NC}" "configure_bolt completed for PHP ${PHP_VERSION}"
-
-# تنظیم مجوزها در هر دو حالت نصب اولیه و نصب مجدد
-log_step "${GREEN}Setting permissions for Laravel directories...${NC}" "Ensuring Laravel directories and permissions"
-ensure_laravel_directories
-sudo chown -R www-data:www-data /var/www/html/laravel-app/storage
-sudo chown -R www-data:www-data /var/www/html/laravel-app/bootstrap/cache
-sudo chown -R www-data:www-data /var/www/html/laravel-app/public
-sudo chown -R www-data:www-data /var/www/html/laravel-app/public/images
-
-sudo chown -R www-data:www-data /var/www/html/laravel-app/public/images/qrcodes
-sudo chmod -R 775 /var/www/html/laravel-app/storage
-sudo chmod -R 775 /var/www/html/laravel-app/bootstrap/cache
-sudo chmod -R 775 /var/www/html/laravel-app/public
-sudo chmod -R 775 /var/www/html/laravel-app/public/images
-sudo chmod -R 775 /var/www/html/laravel-app/public/images/qrcodes
-
-# Restart Apache to apply changes
-echo -e "${GREEN}Restarting Apache to apply changes...${NC}"
-sudo systemctl restart apache2
-
-# Install Composer dependencies
-install_composer_dependencies
-
-# Set up environment variables if not already set
-echo -e "${GREEN}Setting up environment variables...${NC}"
-ensure_laravel_env_file
-repair_merged_env_lines
-
-if [ ! -s "${LARAVEL_ENV_FILE}" ] || ! grep -q '^APP_NAME=' "${LARAVEL_ENV_FILE}"; then
- echo -e "${YELLOW}Warning: .env was missing or incomplete; recreating base settings.${NC}"
- ensure_laravel_env_file
-fi
-
-set_env_value APP_NAME "Laravel"
-set_env_value APP_ENV "production"
-if ! grep -q '^APP_KEY=.\+' "${LARAVEL_ENV_FILE}"; then
- set_env_value APP_KEY ""
-fi
-set_env_value APP_DEBUG "true"
-set_env_value APP_URL "https://${LARAVEL_SUBDOMAIN}"
-set_env_value FRONT_URL "https://${HTML5_SUBDOMAIN}"
-set_env_value DB_CONNECTION "mysql"
-set_env_value DB_HOST "127.0.0.1"
-set_env_value DB_PORT "3306"
-set_env_value DB_DATABASE "${DB_NAME}"
-set_env_value DB_USERNAME "${DB_USER}"
-set_env_value DB_PASSWORD "${DB_PASS}"
-
-prompt_telegram_config
-
-existing_zarinpal="$(read_env_value ZARINPAL_MERCHANT_ID || true)"
-if [ -z "${existing_zarinpal:-}" ]; then
- read -e -p "Enter your Zarinpal Merchant ID (optional, press Enter to skip): " ZARINPAL_MERCHANT_ID
- if [ ! -z "$ZARINPAL_MERCHANT_ID" ]; then
- if [[ $ZARINPAL_MERCHANT_ID =~ ^[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$ ]]; then
- set_env_value ZARINPAL_MERCHANT_ID "${ZARINPAL_MERCHANT_ID}"
- else
- echo -e "${YELLOW}Invalid Zarinpal Merchant ID format. Setting empty value.${NC}"
- set_env_value ZARINPAL_MERCHANT_ID ""
- fi
- else
- set_env_value ZARINPAL_MERCHANT_ID ""
- fi
-fi
-
-existing_nowpayments="$(read_env_value NOWPAYMENTS_API_KEY || true)"
-if [ -z "${existing_nowpayments:-}" ]; then
- read -e -p "Enter your NOWPAYMENTS API KEY (optional, press Enter to skip): " NOWPAYMENTS_API_KEY
- if [ ! -z "$NOWPAYMENTS_API_KEY" ]; then
- if [[ $NOWPAYMENTS_API_KEY =~ ^[A-Za-z0-9-]{36}$ ]]; then
- set_env_value NOWPAYMENTS_API_KEY "${NOWPAYMENTS_API_KEY}"
- else
- echo -e "${YELLOW}Invalid NOWPayments API key format. Setting empty value.${NC}"
- set_env_value NOWPAYMENTS_API_KEY ""
- fi
- else
- set_env_value NOWPAYMENTS_API_KEY ""
- fi
-fi
-
-# Secure .env file: restrict permissions and owner
-sudo chown www-data:www-data /var/www/html/laravel-app/.env || true
-sudo chmod 600 /var/www/html/laravel-app/.env || true
-
-# Ensure phpBolt is loaded before any artisan command (encrypted source)
-verify_bolt_or_configure "${PHP_VERSION}"
-
-# Generate app key (first install only; --force required in production when APP_KEY is empty)
-if grep -qE '^APP_KEY=base64:.+' "${LARAVEL_ENV_FILE}"; then
- echo -e "${GREEN}APP_KEY already set; skipping key generation.${NC}"
-else
- echo -e "${GREEN}Generating app key...${NC}"
- php${PHP_VERSION} artisan key:generate --force
-fi
-
-# Run migrations
-echo -e "${GREEN}Running migrations...${NC}"
-php${PHP_VERSION} artisan migrate --force || {
- echo -e "${RED}Migration failed. Checking database connection...${NC}"
- exit 1
-}
-
-# Run Link Storage
-echo -e "${GREEN}Linking storage...${NC}"
-php${PHP_VERSION} artisan storage:link --force || true
-# Check if phpMyAdmin is installed
-if [ -d "/var/www/html/phpmyadmin" ]; then
- echo -e "${GREEN}phpMyAdmin is already installed.${NC}"
-else
- # Install PHPMyAdmin
- echo -e "${GREEN}Installing PHPMyAdmin...${NC}"
- cd /var/www/html
- run_with_retry "wget -q https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.zip -O phpMyAdmin-latest-all-languages.zip" 3 5 || { echo -e "${RED}Failed to download phpMyAdmin${NC}"; exit 1; }
- unzip phpMyAdmin-latest-all-languages.zip || { echo -e "${RED}Failed to unzip phpMyAdmin archive${NC}"; exit 1; }
- mv phpMyAdmin-*-all-languages phpmyadmin || { echo -e "${RED}Failed to move phpMyAdmin directory${NC}"; exit 1; }
- rm phpMyAdmin-latest-all-languages.zip
-fi
-
-# Set up Apache virtual host for Laravel
-echo -e "${GREEN}Setting up Apache virtual host for Laravel...${NC}"
-sudo bash -c "cat <<EOT > /etc/apache2/sites-available/powerps-core.conf
+# ---------------------------------------------------------------------------
+# Apache / SSL / services
+# ---------------------------------------------------------------------------
+setup_apache_vhosts() {
+ log_info "Configuring Apache virtual hosts..."
+ sudo bash -c "cat > /etc/apache2/sites-available/powerps-core.conf" <<EOT
 <VirtualHost *:80>
     ServerName ${LARAVEL_SUBDOMAIN}
-    DocumentRoot /var/www/html/laravel-app/public
-    <Directory /var/www/html/laravel-app/public>
+    DocumentRoot ${APP_DIR}/public
+    <Directory ${APP_DIR}/public>
         AllowOverride All
         Require all granted
     </Directory>
     ErrorLog \${APACHE_LOG_DIR}/laravel-error.log
     CustomLog \${APACHE_LOG_DIR}/laravel-access.log combined
 </VirtualHost>
-EOT"
+EOT
 
-# Check if the HTML5 project directory exists
-if [ -d "/var/www/html/powerps-webapp" ]; then
- echo -e "${GREEN}Removing existing HTML5 project directory...${NC}"
- backup_existing "/var/www/html/powerps-webapp"
- sudo rm -rf /var/www/html/powerps-webapp || true
-fi
-
-# Clone the HTML5 project repository
-echo -e "${GREEN}Cloning HTML5 project repository...${NC}"
-run_with_retry "git clone https://github.com/rezahajrahimi/powerps-webapp /var/www/html/powerps-webapp" 3 5 || {
- echo -e "${RED}خطا در کلون کردن مخزن${NC}"
- echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: Failed to clone webapp repository" | sudo tee -a /var/log/powerps_install.log >/dev/null
- exit 1
-}
-
-# Change to project directory
-cd /var/www/html/powerps-webapp
-
-# Create new .env file with BASE_URL
-echo "BASE_URL=https://${LARAVEL_SUBDOMAIN}" > assets/.env
-sudo chown www-data:www-data assets/.env || true
-sudo chmod 640 assets/.env || true
-
-# Set up Apache virtual host for HTML5 project
-echo -e "${GREEN}Setting up Apache virtual host for HTML5 project...${NC}"
-sudo bash -c "cat <<EOT > /etc/apache2/sites-available/powerps-webapp.conf
+ sudo bash -c "cat > /etc/apache2/sites-available/powerps-webapp.conf" <<EOT
 <VirtualHost *:80>
     ServerName ${HTML5_SUBDOMAIN}
-    DocumentRoot /var/www/html/powerps-webapp
-    <Directory /var/www/html/powerps-webapp>
+    DocumentRoot ${WEBAPP_DIR}
+    <Directory ${WEBAPP_DIR}>
         AllowOverride All
         Options Indexes FollowSymLinks
         Require all granted
@@ -1228,70 +758,58 @@ sudo bash -c "cat <<EOT > /etc/apache2/sites-available/powerps-webapp.conf
     ErrorLog \${APACHE_LOG_DIR}/html5-error.log
     CustomLog \${APACHE_LOG_DIR}/html5-access.log combined
 </VirtualHost>
-EOT"
+EOT
 
-# Enable Apache virtual hosts
-sudo a2ensite powerps-core || check_command "Failed to enable powerps-core site"
-sudo a2ensite powerps-webapp || check_command "Failed to enable powerps-webapp site"
-sudo a2enmod rewrite || check_command "Failed to enable rewrite module"
-sudo systemctl restart apache2 || check_command "Failed to restart apache2"
+ sudo a2ensite powerps-core powerps-webapp 2>/dev/null || true
+ sudo a2enmod rewrite 2>/dev/null || true
+ restart_service apache2 2>/dev/null || true
+}
 
-# Obtain TLS certificates for subdomains using Certbot (Let's Encrypt)
-setup_ssl
-
-# Add domain entries to /etc/hosts (avoid duplicates)
-for domain in "${LARAVEL_SUBDOMAIN}" "${HTML5_SUBDOMAIN}"; do
- if ! grep -q "$domain" /etc/hosts; then
- echo "127.0.0.1 $domain" | sudo tee -a /etc/hosts
+install_phpmyadmin_if_missing() {
+ if [ -d "/var/www/html/phpmyadmin" ]; then
+  log_info "phpMyAdmin already installed."
+  return 0
  fi
-done
+ log_info "Installing phpMyAdmin..."
+ cd /var/www/html
+ run_with_retry "wget -q https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.zip -O phpMyAdmin.zip" 3 5 \
+  || { log_warn "phpMyAdmin download failed; skipping."; return 0; }
+ unzip -q phpMyAdmin.zip && mv phpMyAdmin-*-all-languages phpmyadmin && rm -f phpMyAdmin.zip || log_warn "phpMyAdmin install failed; skipping."
+}
 
-# Add schedule to cron job (avoid duplicates)
-echo -e "${GREEN}Adding schedule to cron job...${NC}"
-CRON_JOB="* * * * * cd /var/www/html/laravel-app && /usr/bin/php${PHP_VERSION} artisan schedule:run >> /dev/null 2>&1"
-(crontab -l 2>/dev/null | grep -v "artisan schedule:run" ; echo "$CRON_JOB") | crontab -
+setup_ssl() {
+ local email="${1:-}"
+ log_info "Setting up SSL certificates..."
+ if ! command -v certbot >/dev/null 2>&1; then
+  sudo apt-get update
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-certbot-apache certbot
+ fi
+ if [ -z "${email}" ]; then
+  read -e -p "Enter email for Let's Encrypt (Enter for admin@${LARAVEL_SUBDOMAIN#*.}): " email
+ fi
+ email="${email:-admin@${LARAVEL_SUBDOMAIN#*.}}"
+ for domain in "${LARAVEL_SUBDOMAIN}" "${HTML5_SUBDOMAIN}"; do
+  if [ -d "/etc/letsencrypt/live/${domain}" ]; then
+   log_info "Certificate already exists for ${domain}."
+   continue
+  fi
+  run_with_retry "sudo certbot --apache --non-interactive --agree-tos --email ${email} -d ${domain} --redirect" 2 5 \
+   || log_warn "SSL failed for ${domain}. Run certbot manually later."
+ done
+}
 
-# Ensure services start on reboot (avoid duplicates)
-echo -e "${GREEN}Ensuring services start on reboot...${NC}"
-(crontab -l 2>/dev/null | grep -v "@reboot systemctl restart apache2" ; echo "@reboot systemctl restart apache2") | crontab -
-(crontab -l 2>/dev/null | grep -v "@reboot systemctl restart mysql" ; echo "@reboot systemctl restart mysql") | crontab -
+setup_ssl_auto() {
+ setup_ssl "admin@${LARAVEL_SUBDOMAIN#*.}"
+}
 
-# Completion message
-echo -e "${CYAN}==============================${NC}"
-echo -e "${YELLOW} Setup Complete!${NC}"
-echo -e "${CYAN}==============================${NC}"
+setup_cron_and_queue() {
+ log_info "Setting up cron and queue worker..."
+ local cron_job="* * * * * cd ${APP_DIR} && /usr/bin/php${PHP_VERSION} artisan schedule:run >> /dev/null 2>&1"
+ (crontab -l 2>/dev/null | grep -v "artisan schedule:run"; echo "${cron_job}") | crontab -
+ (crontab -l 2>/dev/null | grep -v "@reboot systemctl restart apache2"; echo "@reboot systemctl restart apache2") | crontab -
+ (crontab -l 2>/dev/null | grep -v "@reboot systemctl restart mysql"; echo "@reboot systemctl restart mysql") | crontab -
 
-# Set Telegram Webhook
-echo -e "${GREEN}Setting up Telegram webhook...${NC}"
-if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
- TELEGRAM_BOT_TOKEN="$(read_env_value TELEGRAM_BOT_TOKEN || true)"
-fi
-if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
- echo -e "${YELLOW}Warning: Telegram bot token is not set. Skipping webhook setup.${NC}"
-else
-WEBHOOK_URL="https://${LARAVEL_SUBDOMAIN}/api/telegram/webhooks/inbound"
-TELEGRAM_API="https://api.telegram.org/${TELEGRAM_BOT_TOKEN}/setWebhook?url=${WEBHOOK_URL}"
-
-# Send request to set webhook
-WEBHOOK_RESPONSE=$(curl -s "$TELEGRAM_API")
-
-# Check if webhook was set successfully
-if [[ $WEBHOOK_RESPONSE == *"\"ok\":true"* ]]; then
- echo -e "${GREEN}Telegram webhook set successfully!${NC}"
- echo -e "${GREEN}Webhook URL: ${WEBHOOK_URL}${NC}"
-else
- masked_token="${TELEGRAM_BOT_TOKEN:0:4}...${TELEGRAM_BOT_TOKEN: -4}"
- echo -e "${YELLOW}Warning: Failed to set Telegram webhook. You can set it manually.${NC}"
- echo -e "${YELLOW}Masked bot token: ${masked_token}${NC}"
- echo -e "${YELLOW}Run: curl -F \"url=${WEBHOOK_URL}\" https://api.telegram.org/bot /setWebhook${NC}"
-fi
-fi
-
-echo -e "${GREEN}PowerPs installation complete!${NC}"
-
-# Create and configure Laravel Queue Service (systemd supervised)
-echo -e "${GREEN}Setting up Laravel Queue Service...${NC}"
-sudo bash -c "cat > /etc/systemd/system/laravel-queue.service << EOL
+ sudo bash -c "cat > /etc/systemd/system/laravel-queue.service" <<EOL
 [Unit]
 Description=Laravel Queue Worker
 After=network.target mysql.service apache2.service
@@ -1299,44 +817,34 @@ After=network.target mysql.service apache2.service
 [Service]
 User=www-data
 Group=www-data
-# Keep the worker running and limit restart storms
 Restart=always
 RestartSec=5
-StartLimitIntervalSec=60
-StartLimitBurst=5
-ExecStart=/usr/bin/php${PHP_VERSION} /var/www/html/laravel-app/artisan queue:work --sleep=3 --tries=3 --timeout=0
+ExecStart=/usr/bin/php${PHP_VERSION} ${APP_DIR}/artisan queue:work --sleep=3 --tries=3 --timeout=0
 StandardOutput=append:/var/log/laravel-queue.log
 StandardError=append:/var/log/laravel-queue.error.log
 
 [Install]
 WantedBy=multi-user.target
-EOL"
+EOL
 
-# Ensure log files exist and have correct permissions
-sudo touch /var/log/laravel-queue.log /var/log/laravel-queue.error.log || true
-sudo chown www-data:www-data /var/log/laravel-queue.log /var/log/laravel-queue.error.log || true
-sudo chmod 640 /var/log/laravel-queue.log /var/log/laravel-queue.error.log || true
+ sudo touch /var/log/laravel-queue.log /var/log/laravel-queue.error.log 2>/dev/null || true
+ sudo chown www-data:www-data /var/log/laravel-queue.log /var/log/laravel-queue.error.log 2>/dev/null || true
+ sudo systemctl daemon-reload 2>/dev/null || true
+ sudo systemctl enable --now laravel-queue 2>/dev/null || log_warn "Could not start laravel-queue service."
 
-# Reload systemd and start queue service
-sudo systemctl daemon-reload || check_command "Failed to reload systemd"
-sudo systemctl enable --now laravel-queue || check_command "Failed to enable/start laravel-queue"
-
-# Create Certbot renewal systemd service and timer to renew SSL and reload Apache
-echo -e "${GREEN}Setting up Certbot renewal timer...${NC}"
-sudo bash -c "cat > /etc/systemd/system/certbot-renew.service << 'EOL'
+ sudo bash -c "cat > /etc/systemd/system/certbot-renew.service" <<'EOL'
 [Unit]
-Description=Run Certbot renewal and reload Apache if certificates changed
-Wants=network-online.target
+Description=Run Certbot renewal and reload Apache
 After=network-online.target
 
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/certbot renew --quiet --post-hook 'systemctl reload apache2'
-EOL"
+EOL
 
-sudo bash -c "cat > /etc/systemd/system/certbot-renew.timer << 'EOL'
+ sudo bash -c "cat > /etc/systemd/system/certbot-renew.timer" <<'EOL'
 [Unit]
-Description=Timer to run Certbot renewal daily
+Description=Daily Certbot renewal
 
 [Timer]
 OnCalendar=daily
@@ -1345,12 +853,216 @@ RandomizedDelaySec=3600
 
 [Install]
 WantedBy=timers.target
-EOL"
+EOL
 
-# Reload systemd and enable timer
-sudo systemctl daemon-reload || check_command "Failed to reload systemd after adding certbot units"
-sudo systemctl enable --now certbot-renew.timer || check_command "Failed to enable/start certbot-renew.timer"
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: certbot-renew.timer enabled" | sudo tee -a /var/log/powerps_install.log >/dev/null
+ sudo systemctl daemon-reload 2>/dev/null || true
+ sudo systemctl enable --now certbot-renew.timer 2>/dev/null || true
+}
 
-# Remove old artisan serve from cron
-crontab -l | grep -v '/usr/bin/php /var/www/html/laravel-app/artisan serve' | crontab -
+setup_telegram_webhook() {
+ log_info "Setting up Telegram webhook..."
+ [ -n "${TELEGRAM_BOT_TOKEN:-}" ] || TELEGRAM_BOT_TOKEN="$(read_env_value TELEGRAM_BOT_TOKEN || true)"
+ if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
+  log_warn "Telegram bot token not set; skipping webhook."
+  return 0
+ fi
+ local webhook_url="https://${LARAVEL_SUBDOMAIN}/api/telegram/webhooks/inbound"
+ local response
+ response="$(curl -s "https://api.telegram.org/${TELEGRAM_BOT_TOKEN}/setWebhook?url=${webhook_url}")"
+ if [[ "${response}" == *'"ok":true'* ]]; then
+  log_info "Telegram webhook set: ${webhook_url}"
+ else
+  log_warn "Failed to set Telegram webhook. Set manually later."
+ fi
+}
+
+add_hosts_entries() {
+ for domain in "${LARAVEL_SUBDOMAIN}" "${HTML5_SUBDOMAIN}"; do
+  grep -q "${domain}" /etc/hosts 2>/dev/null || echo "127.0.0.1 ${domain}" | sudo tee -a /etc/hosts >/dev/null
+ done
+}
+
+# ---------------------------------------------------------------------------
+# Main install / update pipeline
+# ---------------------------------------------------------------------------
+run_install_or_update() {
+ log_info "=== PowerPs install / update started ==="
+
+ install_base_packages
+ ensure_mysql_running
+ setup_powerps_database
+
+ sync_laravel_repo
+ PHP_VERSION="$(detect_php_version)"
+ export PATH="/usr/bin:/bin:/sbin:${PATH}"
+ log_info "Target PHP version: ${PHP_VERSION}"
+ [ -f "${APP_DIR}/.powerps-bolt-version" ] && \
+  log_info "phpBolt version: $(tr -d '[:space:]' < "${APP_DIR}/.powerps-bolt-version")"
+
+ install_php_packages
+ install_phpbolt
+ fix_laravel_permissions
+ restart_service apache2 2>/dev/null || true
+
+ install_composer_dependencies
+ setup_laravel_env
+ run_laravel_artisan_steps
+
+ install_phpmyadmin_if_missing
+ sync_webapp_repo
+ setup_apache_vhosts
+ add_hosts_entries
+ setup_ssl_auto
+ setup_cron_and_queue
+ setup_telegram_webhook
+
+ echo ""
+ echo -e "${CYAN}==============================${NC}"
+ echo -e "${YELLOW} PowerPs setup complete!${NC}"
+ echo -e "${CYAN}==============================${NC}"
+ echo -e "${GREEN}Core:   https://${LARAVEL_SUBDOMAIN}${NC}"
+ echo -e "${GREEN}WebApp: https://${HTML5_SUBDOMAIN}${NC}"
+ log_info "=== PowerPs install / update finished ==="
+}
+
+# ---------------------------------------------------------------------------
+# Uninstall
+# ---------------------------------------------------------------------------
+run_uninstall() {
+ log_info "Starting uninstall..."
+ sudo pkill -f artisan 2>/dev/null || true
+ if systemctl list-unit-files 2>/dev/null | grep -q '^laravel-queue\.service'; then
+  sudo systemctl stop laravel-queue 2>/dev/null || true
+  sudo systemctl disable laravel-queue 2>/dev/null || true
+  sudo rm -f /etc/systemd/system/laravel-queue.service
+  sudo systemctl daemon-reload 2>/dev/null || true
+ fi
+
+ local db_name="${DB_NAME}" db_user="${DB_USER}"
+ if [ -f "${LARAVEL_ENV_FILE}" ]; then
+  db_name="$(grep '^DB_DATABASE=' "${LARAVEL_ENV_FILE}" | cut -d= -f2- || echo "${DB_NAME}")"
+  db_user="$(grep '^DB_USERNAME=' "${LARAVEL_ENV_FILE}" | cut -d= -f2- || echo "${DB_USER}")"
+ fi
+
+ [ -d "${APP_DIR}" ] && backup_existing "${APP_DIR}" && sudo rm -rf "${APP_DIR}"
+ [ -d "${WEBAPP_DIR}" ] && backup_existing "${WEBAPP_DIR}" && sudo rm -rf "${WEBAPP_DIR}"
+ sudo mysql -e "DROP DATABASE IF EXISTS \`${db_name}\`;" 2>/dev/null || true
+ sudo mysql -e "DROP USER IF EXISTS '${db_user}'@'localhost';" 2>/dev/null || true
+ sudo mysql -e "FLUSH PRIVILEGES;" 2>/dev/null || true
+
+ sudo a2dissite powerps-core powerps-webapp 2>/dev/null || true
+ sudo rm -f /etc/apache2/sites-available/powerps-core.conf /etc/apache2/sites-available/powerps-webapp.conf
+ restart_service apache2 2>/dev/null || true
+ [ -d "/var/www/html/phpmyadmin" ] && sudo rm -rf /var/www/html/phpmyadmin
+ crontab -l 2>/dev/null | grep -v 'laravel-app' | grep -v 'powerps' | grep -v 'artisan' | crontab - 2>/dev/null || true
+ [ -f "${SUBDOMAIN_FILE}" ] && rm -f "${SUBDOMAIN_FILE}"
+ log_info "Uninstall completed."
+}
+
+# ---------------------------------------------------------------------------
+# Menu
+# ---------------------------------------------------------------------------
+show_menu() {
+ echo -e "${YELLOW}Subdomains: ${LARAVEL_SUBDOMAIN}, ${HTML5_SUBDOMAIN}${NC}"
+ echo -e "${CYAN}Choose an option:${NC}"
+ echo "1) Install / Update"
+ echo "2) Uninstall"
+ echo "3) SSL Certificate (Certbot only)"
+ while true; do
+  read -p "Enter choice [1-3]: " choice
+  case "${choice}" in
+   1) run_install_or_update; return ;;
+   2) run_uninstall; exit 0 ;;
+   3) setup_ssl; exit 0 ;;
+   *) log_warn "Invalid option. Enter 1, 2, or 3." ;;
+  esac
+ done
+}
+
+# ---------------------------------------------------------------------------
+# Self-test (offline): POWERPS_SELFTEST=1 bash install.sh
+# ---------------------------------------------------------------------------
+run_selftests() {
+ local tmpdir pass=0 fail=0
+ tmpdir="$(mktemp -d)"
+
+ assert() {
+  local label="$1" cmd="$2"
+  if eval "${cmd}"; then
+   echo "  OK  ${label}"
+   pass=$((pass + 1))
+  else
+   echo "  FAIL ${label}"
+   fail=$((fail + 1))
+  fi
+ }
+
+ echo "==> PowerPs install.sh self-test"
+ LARAVEL_ENV_FILE="${tmpdir}/.env"
+ printf 'VITE_PUSHER_APP_CLUSTER="${PUSHER_APP_CLUSTER}"APP_NAME=Laravel\n' > "${LARAVEL_ENV_FILE}"
+ repair_merged_env_lines
+ assert "repair_merged_env_lines splits merged keys" "grep -q '^APP_NAME=Laravel' '${LARAVEL_ENV_FILE}'"
+
+ set_env_value APP_NAME "PowerPs"
+ set_env_value DB_PASSWORD "abc/+=special"
+ assert "set_env_value updates APP_NAME" "grep -q '^APP_NAME=PowerPs' '${LARAVEL_ENV_FILE}'"
+ assert "set_env_value keeps special chars" "grep -q '^DB_PASSWORD=abc/+=special' '${LARAVEL_ENV_FILE}'"
+
+ assert "normalize bot prefix" "[[ \"\$(normalize_telegram_token '12345678901234:AAEDQ8rH0ki0UCEM3Cmv1qQhGRE8_HRoeyo')\" == bot12345678901234:AAEDQ8rH0ki0UCEM3Cmv1qQhGRE8_HRoeyo ]]"
+ assert "valid_telegram_token accepts bot token" "valid_telegram_token 'bot12345678901234:AAEDQ8rH0ki0UCEM3Cmv1qQhGRE8_HRoeyo'"
+
+ local script_dir core_dir
+ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ core_dir="${POWERPS_CORE_DIR:-${script_dir}/../powerps-core}"
+ if [ -f "${core_dir}/bolt.so" ] || [ -f "${core_dir}/bolt-x86_64.so" ]; then
+  APP_DIR="${core_dir}"
+  assert "pick_bolt_source finds bolt" "[ -n \"\$(pick_bolt_source)\" ]"
+ fi
+
+ if [ -f "${core_dir}/composer.json" ]; then
+  cp "${core_dir}/composer.json" "${tmpdir}/composer.json"
+  sanitize_release_composer_json "${tmpdir}/composer.json"
+  assert "sanitize removes encrypter from composer.json" "! grep -q 'laravel-source-encrypter' '${tmpdir}/composer.json'"
+ fi
+
+ rm -rf "${tmpdir}"
+ echo ""
+ echo "Self-test: ${pass} passed, ${fail} failed"
+ [ "${fail}" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# Entry
+# ---------------------------------------------------------------------------
+if [[ "${POWERPS_SELFTEST:-}" == "1" ]]; then
+ run_selftests
+ exit $?
+fi
+
+if [[ "${POWERPS_AUTO_INSTALL:-}" == "1" ]]; then
+ init_logging
+ echo -e "${CYAN}==============================${NC}"
+ echo -e "${YELLOW} PowerPs auto-install mode${NC}"
+ echo -e "${CYAN}==============================${NC}"
+ resolve_subdomains
+ [ -n "${POWERPS_BOT_TOKEN:-}" ] && TELEGRAM_BOT_TOKEN="${POWERPS_BOT_TOKEN}"
+ [ -n "${POWERPS_ADMIN_ID:-}" ] && TELEGRAM_ADMIN_ID="${POWERPS_ADMIN_ID}"
+ run_install_or_update
+ exit 0
+fi
+
+init_logging
+
+echo -e "${CYAN}==============================${NC}"
+echo -e "${YELLOW} PowerPs Core + WebApp Installer${NC}"
+echo -e "${CYAN}==============================${NC}"
+
+free_space="$(df -m / | awk 'NR==2 {print $4}')"
+if [ "${free_space}" -lt 500 ]; then
+ die "Not enough disk space (need at least 500MB free)."
+elif [ "${free_space}" -lt 1000 ]; then
+ log_warn "Low disk space (${free_space}MB free)."
+fi
+
+resolve_subdomains
+show_menu
