@@ -80,7 +80,7 @@ if ! ${php_bin} -n -d "extension=${bolt_src}" -r 'exit(function_exists("bolt_dec
 fi
 rm -f /tmp/powerps-bolt-test.err
 
-bolt_ini_line="extension=${php_ext_dir}/bolt.so"
+bolt_ini_line="extension=bolt.so"
 
 echo -e "${GREEN}Installing phpBolt from ${bolt_src} -> ${php_ext_dir}/bolt.so${NC}"
 sudo mkdir -p "${php_ext_dir}"
@@ -99,8 +99,10 @@ if [ -e /usr/local/bin/php ]; then
 fi
 hash -r 2>/dev/null || true
 
-if ! ${php_bin} -m 2>/dev/null | grep -qi '^bolt$'; then
+if ! ${php_bin} -r 'exit(function_exists("bolt_decrypt") ? 0 : 1);' 2>/tmp/powerps-bolt-load.err; then
  echo -e "${RED}Error: ${php_bin} still does not load bolt.${NC}" >&2
+ echo -e "${YELLOW}--- php startup errors ---${NC}" >&2
+ cat /tmp/powerps-bolt-load.err >&2 || true
  echo -e "${YELLOW}--- php --ini ---${NC}" >&2
  ${php_bin} --ini 2>&1 | head -15 >&2 || true
  echo -e "${YELLOW}--- conf.d/99-bolt.ini ---${NC}" >&2
@@ -108,11 +110,13 @@ if ! ${php_bin} -m 2>/dev/null | grep -qi '^bolt$'; then
  echo -e "${YELLOW}--- extension file ---${NC}" >&2
  ls -la "${php_ext_dir}/bolt.so" 2>&1 >&2 || true
  echo -e "${YELLOW}--- direct load test ---${NC}" >&2
- ${php_bin} -d "extension=${php_ext_dir}/bolt.so" -m 2>&1 | grep -i bolt >&2 || true
+ ${php_bin} -d "extension=${php_ext_dir}/bolt.so" -r 'echo function_exists("bolt_decrypt")?"OK":"FAIL";' 2>&1 >&2 || true
+ rm -f /tmp/powerps-bolt-load.err
  exit 1
 fi
+rm -f /tmp/powerps-bolt-load.err
 
-if ! php -m 2>/dev/null | grep -qi '^bolt$'; then
+if ! php -r 'exit(function_exists("bolt_decrypt") ? 0 : 1);' 2>/dev/null; then
  echo -e "${YELLOW}Warning: default 'php' is not ${php_bin}. Use: ${php_bin} artisan ...${NC}" >&2
 else
  echo -e "${GREEN}Default php loads phpBolt.${NC}"

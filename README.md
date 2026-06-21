@@ -100,6 +100,34 @@ php artisan migrate --force
 
 اگر `php -m | grep bolt` خالی بود ولی `php8.4 -m | grep bolt` کار کرد، از `php8.4 artisan migrate --force` استفاده کنید.
 
+## خطای `phpBolt failed to load in php8.4`
+
+معمولاً از **پیکربندی قدیمی bolt** (دو بار لود شدن با `phpenmod` + `99-bolt.ini`) یا ini با مسیر مطلق اشتباه است.
+
+روی سرور:
+
+```sh
+# پاک‌سازی و نصب مجدد bolt
+sudo rm -f /etc/php/8.4/cli/conf.d/*bolt* /etc/php/8.4/apache2/conf.d/*bolt*
+sudo rm -f /etc/php/8.4/mods-available/bolt.ini
+sudo phpdismod -v 8.4 bolt 2>/dev/null || true
+sudo rm -f /usr/lib/php/20240924/bolt.so
+
+sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rezahajrahimi/powerps-core-scripts/refs/heads/main/fix-phpbolt.sh)"
+
+# تست
+php8.4 -r 'var_dump(function_exists("bolt_decrypt"));'   # باید bool(true) باشد
+```
+
+اگر باز هم خطا داد، خروجی این دستورات را بفرستید:
+
+```sh
+file /var/www/html/laravel-app/bolt-x86_64.so
+php8.4 --ini
+cat /etc/php/8.4/cli/conf.d/99-bolt.ini
+php8.4 -r 'var_dump(function_exists("bolt_decrypt"));' 2>&1
+```
+
 ## English
 
 Automated installer for PowerPs Core (Laravel backend) and PowerPs WebApp.
