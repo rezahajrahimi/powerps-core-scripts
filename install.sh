@@ -90,6 +90,13 @@ php_bin() {
  echo "php${PHP_VERSION}"
 }
 
+trim_whitespace() {
+ local s="$1"
+ s="${s#"${s%%[![:space:]]*}"}"
+ s="${s%"${s##*[![:space:]]}"}"
+ printf '%s' "${s}"
+}
+
 artisan() {
  cd "${APP_DIR}"
  "$(php_bin)" artisan "$@"
@@ -529,7 +536,7 @@ pick_bolt_source() {
 
 resolve_php_extension_dir() {
  local php_ext_dir
- php_ext_dir="$("$(php_bin)" -n -i 2>/dev/null | awk -F'=> ' '/^extension_dir/{print $2; exit}')"
+ php_ext_dir="$(trim_whitespace "$("$(php_bin)" -n -i 2>/dev/null | awk -F'=> ' '/^extension_dir/{print $2; exit}')")"
  if [ -z "${php_ext_dir}" ]; then
   case "${PHP_VERSION}" in
    8.4) php_ext_dir="/usr/lib/php/20240924" ;;
@@ -561,6 +568,9 @@ cleanup_old_bolt_config() {
  if command -v phpdismod >/dev/null 2>&1; then
   sudo phpdismod -v "${PHP_VERSION}" bolt 2>/dev/null || true
  fi
+ # Previous installs could copy bolt.so into a dir with trailing whitespace in the path.
+ sudo rm -f "${php_ext_dir} /bolt.so" 2>/dev/null || true
+ sudo rmdir "${php_ext_dir} " 2>/dev/null || true
 }
 
 report_phpbolt_load_failure() {

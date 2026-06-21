@@ -112,6 +112,8 @@ sudo rm -f /etc/php/8.4/cli/conf.d/*bolt* /etc/php/8.4/apache2/conf.d/*bolt*
 sudo rm -f /etc/php/8.4/mods-available/bolt.ini
 sudo phpdismod -v 8.4 bolt 2>/dev/null || true
 sudo rm -f /usr/lib/php/20240924/bolt.so
+sudo rm -f "/usr/lib/php/20240924 /bolt.so" 2>/dev/null || true
+sudo rmdir "/usr/lib/php/20240924 " 2>/dev/null || true
 
 sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rezahajrahimi/powerps-core-scripts/refs/heads/main/fix-phpbolt.sh)"
 

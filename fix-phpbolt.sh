@@ -35,13 +35,20 @@ pick_bolt_source() {
  return 1
 }
 
+trim_whitespace() {
+ local s="$1"
+ s="${s#"${s%%[![:space:]]*}"}"
+ s="${s%"${s##*[![:space:]]}"}"
+ printf '%s' "${s}"
+}
+
 php_bin="php${PHP_VERSION}"
 if ! command -v "${php_bin}" >/dev/null 2>&1; then
  echo -e "${RED}Error: ${php_bin} is not installed. Run install.sh first.${NC}" >&2
  exit 1
 fi
 
-php_ext_dir="$(${php_bin} -n -i 2>/dev/null | awk -F'=> ' '/^extension_dir/{print $2; exit}')"
+php_ext_dir="$(trim_whitespace "$(${php_bin} -n -i 2>/dev/null | awk -F'=> ' '/^extension_dir/{print $2; exit}')")"
 if [ -z "${php_ext_dir}" ]; then
  case "${PHP_VERSION}" in
  8.4) php_ext_dir="/usr/lib/php/20240924" ;;
@@ -60,6 +67,8 @@ sudo rm -f \
  "${apache_conf_dir}"/*bolt*.ini \
  "${ini_file}" \
  "${php_ext_dir}/bolt.so" 2>/dev/null || true
+sudo rm -f "${php_ext_dir} /bolt.so" 2>/dev/null || true
+sudo rmdir "${php_ext_dir} " 2>/dev/null || true
 command -v phpdismod >/dev/null 2>&1 && sudo phpdismod -v "${PHP_VERSION}" bolt 2>/dev/null || true
 
 bolt_src="$(pick_bolt_source)" || {
