@@ -432,7 +432,7 @@ install_base_packages() {
  sudo apt-get update
  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   software-properties-common curl openssl ca-certificates \
-  apache2 mysql-server composer unzip git \
+  apache2 mysql-server composer unzip git cron \
   python3-certbot-apache certbot \
   php-imagick libmagickwand-dev || die "Failed to install base packages."
  ensure_ondrej_php_ppa
@@ -882,12 +882,24 @@ setup_ssl_auto() {
 
 setup_cron_and_queue() {
  log_info "Setting up cron and queue worker..."
- local cron_job="* * * * * cd ${APP_DIR} && /usr/bin/php${PHP_VERSION} artisan schedule:run >> /dev/null 2>&1"
- (crontab -l 2>/dev/null | grep -v "artisan schedule:run"; echo "${cron_job}") | crontab -
- (crontab -l 2>/dev/null | grep -v "@reboot systemctl restart apache2"; echo "@reboot systemctl restart apache2") | crontab -
- (crontab -l 2>/dev/null | grep -v "@reboot systemctl restart mysql"; echo "@reboot systemctl restart mysql") | crontab -
 
- sudo bash -c "cat > /etc/systemd/system/laravel-queue.service" <<EOL
+ if ! command -v crontab >/dev/null 2>&1; then
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cron || log_warn "Could not install cron package."
+ fi
+
+ local cron_job="* * * * * cd ${APP_DIR} && /usr/bin/php${PHP_VERSION} artisan schedule:run >> /dev/null 2>&1"
+ if command -v crontab >/dev/null 2>&1; then
+  (crontab -l 2>/dev/null | grep -v "artisan schedule:run"; echo "${cron_job}") | crontab - \
+   || log_warn "Could not install Laravel schedule cron job."
+  (crontab -l 2>/dev/null | grep -v "@reboot systemctl restart apache2"; echo "@reboot systemctl restart apache2") | crontab - \
+   || true
+  (crontab -l 2>/dev/null | grep -v "@reboot systemctl restart mysql"; echo "@reboot systemctl restart mysql") | crontab - \
+   || true
+ else
+  log_warn "crontab not available; skipping schedule cron jobs."
+ fi
+
+ sudo tee /etc/systemd/system/laravel-queue.service >/dev/null <<EOL
 [Unit]
 Description=Laravel Queue Worker
 After=network.target mysql.service apache2.service
@@ -905,12 +917,25 @@ StandardError=append:/var/log/laravel-queue.error.log
 WantedBy=multi-user.target
 EOL
 
- sudo touch /var/log/laravel-queue.log /var/log/laravel-queue.error.log 2>/dev/null || true
- sudo chown www-data:www-data /var/log/laravel-queue.log /var/log/laravel-queue.error.log 2>/dev/null || true
- sudo systemctl daemon-reload 2>/dev/null || true
- sudo systemctl enable --now laravel-queue 2>/dev/null || log_warn "Could not start laravel-queue service."
+ if [ ! -f /etc/systemd/system/laravel-queue.service ]; then
+  die "Failed to create /etc/systemd/system/laravel-queue.service"
+ fi
 
- sudo bash -c "cat > /etc/systemd/system/certbot-renew.service" <<'EOL'
+ sudo touch /var/log/laravel-queue.log /var/log/laravel-queue.error.log
+ sudo chown www-data:www-data /var/log/laravel-queue.log /var/log/laravel-queue.error.log
+
+ if command -v systemctl >/dev/null 2>&1; then
+  sudo systemctl daemon-reload
+  if ! sudo systemctl enable --now laravel-queue; then
+   log_warn "Could not start laravel-queue via systemctl. Check: journalctl -u laravel-queue -n 30"
+  else
+   log_info "laravel-queue service enabled."
+  fi
+ else
+  log_warn "systemctl not available; laravel-queue unit file created but not started."
+ fi
+
+ sudo tee /etc/systemd/system/certbot-renew.service >/dev/null <<'EOL'
 [Unit]
 Description=Run Certbot renewal and reload Apache
 After=network-online.target
@@ -920,7 +945,7 @@ Type=oneshot
 ExecStart=/usr/bin/certbot renew --quiet --post-hook 'systemctl reload apache2'
 EOL
 
- sudo bash -c "cat > /etc/systemd/system/certbot-renew.timer" <<'EOL'
+ sudo tee /etc/systemd/system/certbot-renew.timer >/dev/null <<'EOL'
 [Unit]
 Description=Daily Certbot renewal
 
@@ -933,8 +958,10 @@ RandomizedDelaySec=3600
 WantedBy=timers.target
 EOL
 
- sudo systemctl daemon-reload 2>/dev/null || true
- sudo systemctl enable --now certbot-renew.timer 2>/dev/null || true
+ if command -v systemctl >/dev/null 2>&1; then
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now certbot-renew.timer 2>/dev/null || log_warn "Could not enable certbot-renew.timer."
+ fi
 }
 
 setup_telegram_webhook() {
