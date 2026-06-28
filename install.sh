@@ -710,6 +710,9 @@ sync_webapp_repo() {
  if [ -f "${web_env_backup}" ]; then
   cp "${web_env_backup}" "${WEBAPP_DIR}/assets/.env"
   rm -f "${web_env_backup}"
+  if grep -qE '^BASE_URL=https://core\.example\.com' "${WEBAPP_DIR}/assets/.env" 2>/dev/null; then
+   sed -i "s|^BASE_URL=.*|BASE_URL=https://${LARAVEL_SUBDOMAIN}|" "${WEBAPP_DIR}/assets/.env"
+  fi
  else
   echo "BASE_URL=https://${LARAVEL_SUBDOMAIN}" > "${WEBAPP_DIR}/assets/.env"
  fi
