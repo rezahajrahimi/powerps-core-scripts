@@ -749,9 +749,17 @@ fix_laravel_permissions() {
 sanitize_release_composer_json() {
  local composer_file="$1"
  [ -f "${composer_file}" ] || return 0
+ local script_dir
+ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ if [ -f "${script_dir}/sanitize-release-composer.php" ]; then
+  "$(php_bin)" "${script_dir}/sanitize-release-composer.php" "$(dirname "${composer_file}")"
+  return
+ fi
  "$(php_bin)" -r '
-$path = $argv[1];
-$data = json_decode(file_get_contents($path), true);
+$root = dirname($argv[1]);
+$jsonPath = $argv[1];
+$lockPath = $root . "/composer.lock";
+$data = json_decode(file_get_contents($jsonPath), true);
 if (!is_array($data)) { exit(1); }
 unset($data["require-dev"]["sbamtr/laravel-source-encrypter"]);
 if (isset($data["autoload-dev"]["psr-4"]["sbamtr\\LaravelSourceEncrypter\\"])) {
@@ -763,7 +771,24 @@ if (!empty($data["repositories"])) {
   fn($repo) => ($repo["type"] ?? "") !== "path"
  ));
 }
-file_put_contents($path, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
+$json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
+file_put_contents($jsonPath, $json);
+if (!is_file($lockPath)) { exit(0); }
+$lock = json_decode(file_get_contents($lockPath), true);
+if (!is_array($lock)) { exit(1); }
+if (!empty($lock["packages-dev"])) {
+ $lock["packages-dev"] = array_values(array_filter(
+  $lock["packages-dev"],
+  fn($p) => ($p["name"] ?? "") !== "sbamtr/laravel-source-encrypter"
+ ));
+}
+$keys = ["name","version","require","require-dev","conflict","replace","provide","minimum-stability","prefer-stable","repositories","extra"];
+$relevant = [];
+foreach (array_intersect($keys, array_keys($data)) as $key) { $relevant[$key] = $data[$key]; }
+if (isset($data["config"]["platform"])) { $relevant["config"]["platform"] = $data["config"]["platform"]; }
+ksort($relevant);
+$lock["content-hash"] = md5(json_encode($relevant));
+file_put_contents($lockPath, json_encode($lock, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
 ' "${composer_file}"
 }
 
@@ -773,10 +798,8 @@ install_composer_dependencies() {
  export COMPOSER_ALLOW_SUPERUSER=1
 
  if ! "$(php_bin)" "${COMPOSER_BIN}" validate --no-check-publish --no-interaction >/dev/null 2>&1; then
-  log_warn "Composer lock out of sync; fixing composer.json for production..."
+  log_warn "Composer lock out of sync; sanitizing composer files for production..."
   sanitize_release_composer_json "${APP_DIR}/composer.json"
-  "$(php_bin)" "${COMPOSER_BIN}" update --lock --no-install --no-dev --no-interaction \
-   --ignore-platform-reqs --no-scripts >/dev/null 2>&1 || true
  fi
 
  local install_cmd
@@ -843,6 +866,7 @@ EOT
 
  sudo a2ensite powerps-core powerps-webapp 2>/dev/null || true
  sudo a2enmod rewrite 2>/dev/null || true
+ sudo a2enmod headers 2>/dev/null || true
  restart_service apache2 2>/dev/null || true
 }
 
@@ -1129,8 +1153,12 @@ run_selftests() {
 
  if [ -f "${core_dir}/composer.json" ]; then
   cp "${core_dir}/composer.json" "${tmpdir}/composer.json"
+  [ -f "${core_dir}/composer.lock" ] && cp "${core_dir}/composer.lock" "${tmpdir}/composer.lock"
   sanitize_release_composer_json "${tmpdir}/composer.json"
   assert "sanitize removes encrypter from composer.json" "! grep -q 'laravel-source-encrypter' '${tmpdir}/composer.json'"
+  if [ -f "${tmpdir}/composer.lock" ] && command -v composer >/dev/null 2>&1; then
+   assert "sanitize syncs composer.lock" "(cd '${tmpdir}' && composer validate --no-check-publish --no-interaction >/dev/null 2>&1)"
+  fi
  fi
 
  rm -rf "${tmpdir}"
