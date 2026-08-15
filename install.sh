@@ -24,7 +24,7 @@ DB_NAME="powerps_db"
 DB_USER="powerps_user"
 DB_PASS=""
 PHP_VERSION="8.4"
-COMPOSER_BIN="/usr/bin/composer"
+COMPOSER_BIN="/usr/local/bin/composer"
 
 LARAVEL_SUBDOMAIN=""
 HTML5_SUBDOMAIN=""
@@ -87,7 +87,17 @@ backup_existing() {
 }
 
 php_bin() {
- echo "php${PHP_VERSION}"
+ if command -v "php${PHP_VERSION}" >/dev/null 2>&1; then
+  echo "php${PHP_VERSION}"
+  return 0
+ fi
+ echo "php"
+}
+
+prefer_os_path() {
+ # Keep /usr/local/bin first so the official Composer PHAR wins over Ubuntu's
+ # /usr/bin/composer (which is too old for PHP 8.4).
+ export PATH="/usr/local/bin:/usr/sbin:/usr/bin:/bin:/sbin"
 }
 
 trim_whitespace() {
@@ -432,7 +442,7 @@ install_base_packages() {
  sudo apt-get update
  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   software-properties-common curl openssl ca-certificates \
-  apache2 mysql-server composer unzip git cron \
+  apache2 mysql-server unzip git cron \
   python3-certbot-apache certbot \
   php-imagick libmagickwand-dev || die "Failed to install base packages."
  ensure_ondrej_php_ppa
@@ -454,7 +464,7 @@ install_php_packages() {
  sudo ln -sfn "/usr/bin/php${PHP_VERSION}" /usr/local/bin/php 2>/dev/null || true
  sudo a2enmod "php${PHP_VERSION}" 2>/dev/null || true
  hash -r 2>/dev/null || true
- export PATH="/usr/bin:/bin:/sbin:${PATH}"
+ prefer_os_path
 }
 
 detect_php_version() {
@@ -663,7 +673,7 @@ update_laravel_repo() {
  [ -d "${APP_DIR}/public/images/transaction_images" ] && cp -a "${APP_DIR}/public/images/transaction_images" "${backup_dir}/" || true
 
  cd "${APP_DIR}"
- git fetch origin main
+ GIT_TERMINAL_PROMPT=0 git fetch origin main
  git reset --hard origin/main
 
  [ -f "${backup_dir}/.env" ] && cp "${backup_dir}/.env" "${APP_DIR}/.env"
@@ -749,10 +759,21 @@ fix_laravel_permissions() {
 sanitize_release_composer_json() {
  local composer_file="$1"
  [ -f "${composer_file}" ] || return 0
- local script_dir
- script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
- if [ -f "${script_dir}/sanitize-release-composer.php" ]; then
-  "$(php_bin)" "${script_dir}/sanitize-release-composer.php" "$(dirname "${composer_file}")"
+ local project_dir helper=""
+ project_dir="$(dirname "${composer_file}")"
+
+ if [ -f "${project_dir}/sanitize-release-composer.php" ]; then
+  helper="${project_dir}/sanitize-release-composer.php"
+ else
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+  if [ -n "${script_dir}" ] && [ -f "${script_dir}/sanitize-release-composer.php" ]; then
+   helper="${script_dir}/sanitize-release-composer.php"
+  fi
+ fi
+
+ if [ -n "${helper}" ]; then
+  "$(php_bin)" "${helper}" "${project_dir}"
   return
  fi
  "$(php_bin)" -r '
@@ -792,32 +813,109 @@ file_put_contents($lockPath, json_encode($lock, JSON_PRETTY_PRINT | JSON_UNESCAP
 ' "${composer_file}"
 }
 
+is_distro_composer() {
+ local bin="$1"
+ [ -f "${bin}" ] || return 1
+ grep -q '/usr/share/php/Composer' "${bin}" 2>/dev/null
+}
+
+install_official_composer() {
+ log_info "Installing official Composer 2 (required for PHP ${PHP_VERSION})..."
+ sudo mkdir -p /usr/local/bin
+ local setup="/tmp/powerps-composer-setup.php"
+ local phar="/tmp/powerps-composer.phar"
+ rm -f "${setup}" "${phar}"
+
+ if run_with_retry "curl -fsSL https://getcomposer.org/installer -o ${setup}" 3 5; then
+  sudo "$(php_bin)" "${setup}" --install-dir=/usr/local/bin --filename=composer --quiet \
+   && rm -f "${setup}" && COMPOSER_BIN="/usr/local/bin/composer" && return 0
+  log_warn "Composer installer failed; trying GitHub composer.phar..."
+ fi
+
+ if run_with_retry "curl -fsSL https://github.com/composer/composer/releases/latest/download/composer.phar -o ${phar}" 3 5; then
+  sudo mv "${phar}" /usr/local/bin/composer
+  sudo chmod 755 /usr/local/bin/composer
+  COMPOSER_BIN="/usr/local/bin/composer"
+  return 0
+ fi
+
+ if [ -x /usr/bin/composer ]; then
+  log_warn "Could not download Composer PHAR; falling back to Ubuntu composer with deprecations silenced."
+  COMPOSER_BIN="/usr/bin/composer"
+  return 0
+ fi
+
+ die "Failed to install Composer. Check DNS/HTTPS access to getcomposer.org or GitHub."
+}
+
+ensure_composer() {
+ prefer_os_path
+ COMPOSER_BIN="/usr/local/bin/composer"
+
+ # Ubuntu/Debian "composer" uses /usr/share/php/Composer and emits PHP 8.4
+ # deprecations (E_STRICT, implicit nullable) that abort the installer.
+ if [ -x "${COMPOSER_BIN}" ] && ! is_distro_composer "${COMPOSER_BIN}"; then
+  if "$(php_bin)" -d error_reporting=6143 "${COMPOSER_BIN}" --version --no-ansi >/dev/null 2>&1; then
+   log_info "Composer: $("$(php_bin)" -d error_reporting=6143 "${COMPOSER_BIN}" --version --no-ansi 2>/dev/null | head -1)"
+   return 0
+  fi
+ fi
+
+ install_official_composer
+ if ! "$(php_bin)" -d error_reporting=6143 "${COMPOSER_BIN}" --version --no-ansi >/dev/null 2>&1; then
+  die "Composer PHAR is installed but does not run with $(php_bin)."
+ fi
+ log_info "Composer: $("$(php_bin)" -d error_reporting=6143 "${COMPOSER_BIN}" --version --no-ansi 2>/dev/null | head -1)"
+}
+
+run_composer() {
+ export COMPOSER_ALLOW_SUPERUSER=1
+ export COMPOSER_NO_AUDIT=1
+ export COMPOSER_HOME="${STATE_DIR}/composer"
+ sudo mkdir -p "${COMPOSER_HOME}" 2>/dev/null || mkdir -p "${COMPOSER_HOME}"
+ # 6143 = E_ALL without E_DEPRECATED / E_USER_DEPRECATED (Ubuntu Composer + PHP 8.4)
+ "$(php_bin)" -d error_reporting=6143 -d display_errors=0 "${COMPOSER_BIN}" "$@"
+}
+
 install_composer_dependencies() {
  log_info "Installing Composer dependencies..."
  cd "${APP_DIR}"
+ ensure_composer
  export COMPOSER_ALLOW_SUPERUSER=1
+ export COMPOSER_NO_AUDIT=1
+ export COMPOSER_HOME="${STATE_DIR}/composer"
+ sudo mkdir -p "${COMPOSER_HOME}" 2>/dev/null || true
 
- if ! "$(php_bin)" "${COMPOSER_BIN}" validate --no-check-publish --no-interaction >/dev/null 2>&1; then
-  log_warn "Composer lock out of sync; sanitizing composer files for production..."
-  sanitize_release_composer_json "${APP_DIR}/composer.json"
+ sanitize_release_composer_json "${APP_DIR}/composer.json"
+
+ local validate_out=""
+ if ! validate_out="$(run_composer validate --no-check-publish --no-interaction 2>&1)"; then
+  log_warn "composer validate reported a problem (install will still be attempted):"
+  echo "${validate_out}"
+  echo "${validate_out}" | sudo tee -a "${LOG_FILE}" >/dev/null || true
+ else
+  log_info "composer.json and composer.lock are in sync."
  fi
 
  local install_cmd
- install_cmd="$(php_bin) ${COMPOSER_BIN} install --no-dev --no-interaction --no-progress --prefer-dist --optimize-autoloader --no-scripts"
+ install_cmd="$(php_bin) -d error_reporting=6143 -d display_errors=0 ${COMPOSER_BIN} install --no-dev --no-interaction --no-progress --prefer-dist --optimize-autoloader --no-scripts --no-ansi"
 
  if ! run_with_retry "${install_cmd}" 3 5; then
   log_warn "Composer install failed; retrying with --ignore-platform-reqs..."
   run_with_retry "${install_cmd} --ignore-platform-reqs" 3 5 \
-   || die "Composer install failed. Run: cd ${APP_DIR} && $(php_bin) ${COMPOSER_BIN} validate"
+   || die "Composer install failed. See ${LOG_FILE} or run: cd ${APP_DIR} && $(php_bin) ${COMPOSER_BIN} validate"
  fi
 
- "$(php_bin)" "${COMPOSER_BIN}" dump-autoload --no-dev --optimize --no-interaction \
-  --ignore-platform-reqs --no-scripts >/dev/null 2>&1 || true
+ run_composer dump-autoload --no-dev --optimize --no-interaction \
+  --ignore-platform-reqs --no-scripts --no-ansi >/dev/null 2>&1 || true
 }
 
 run_laravel_artisan_steps() {
  log_info "Running Laravel setup (key, migrate, storage)..."
  cd "${APP_DIR}"
+
+ "$(php_bin)" artisan config:clear --no-interaction 2>/dev/null || true
+ "$(php_bin)" artisan cache:clear --no-interaction 2>/dev/null || true
 
  if grep -qE '^APP_KEY=base64:.+' "${LARAVEL_ENV_FILE}"; then
   log_info "APP_KEY already set; skipping key generation."
@@ -1019,6 +1117,8 @@ add_hosts_entries() {
 # ---------------------------------------------------------------------------
 run_install_or_update() {
  log_info "=== PowerPs install / update started ==="
+ export GIT_TERMINAL_PROMPT=0
+ prefer_os_path
 
  install_base_packages
  ensure_mysql_running
@@ -1026,7 +1126,7 @@ run_install_or_update() {
 
  sync_laravel_repo
  PHP_VERSION="$(detect_php_version)"
- export PATH="/usr/bin:/bin:/sbin:${PATH}"
+ prefer_os_path
  log_info "Target PHP version: ${PHP_VERSION}"
  [ -f "${APP_DIR}/.powerps-bolt-version" ] && \
   log_info "phpBolt version: $(tr -d '[:space:]' < "${APP_DIR}/.powerps-bolt-version")"

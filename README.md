@@ -11,11 +11,12 @@ sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rezahajrahimi/powerps
 ## این اسکریپت چه کار می‌کند؟
 
 1. PHP **8.4** و پکیج‌های لازم را نصب می‌کند
-2. ریپوی [powerps-core](https://github.com/rezahajrahimi/powerps-core) را clone یا update می‌کند
-3. **phpBolt** را از فایل‌های داخل همان ریپو فعال می‌کند
-4. Composer، migrate، cron، queue worker و SSL را راه‌اندازی می‌کند
-5. [powerps-webapp](https://github.com/rezahajrahimi/powerps-webapp) را نصب می‌کند
-6. اگر **Bot Token** یا **Admin ID** در `.env` خالی باشد، از شما می‌پرسد (نصب اولیه و به‌روزرسانی)
+2. Composer **رسمی ۲.۸+** را در `/usr/local/bin/composer` می‌گذارد (بستهٔ `composer` اوبونتو با PHP 8.4 ناسازگار است)
+3. ریپوی [powerps-core](https://github.com/rezahajrahimi/powerps-core) را clone یا update می‌کند
+4. **phpBolt** را از فایل‌های داخل همان ریپو فعال می‌کند
+5. `composer install --no-dev`، migrate، cron، queue worker و SSL را راه‌اندازی می‌کند
+6. [powerps-webapp](https://github.com/rezahajrahimi/powerps-webapp) را نصب می‌کند
+7. اگر **Bot Token** یا **Admin ID** در `.env` خالی باشد، از شما می‌پرسد (نصب اولیه و به‌روزرسانی)
 
 ## bolt.so از کجا می‌آید؟
 
@@ -83,8 +84,6 @@ sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rezahajrahimi/powerps
 sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rezahajrahimi/powerps-core-scripts/refs/heads/main/install.sh)" @ install
 ```
 
-لاگ نصب: `/var/log/powerps_install.log`
-
 ```sh
 # تشخیص
 php -v
@@ -99,6 +98,21 @@ php artisan migrate --force
 ```
 
 اگر `php -m | grep bolt` خالی بود ولی `php8.4 -m | grep bolt` کار کرد، از `php8.4 artisan migrate --force` استفاده کنید.
+
+لاگ نصب: `/var/log/powerps_install.log`
+
+## خطای `E_STRICT` / `Composer\Pcre\Preg` هنگام Composer
+
+این از **Composer بسته‌بندی‌شده اوبونتو** است (`/usr/bin/composer` → `/usr/share/php/Composer`) که با PHP 8.4 سازگار نیست. نسخهٔ جدید install به‌جای آن Composer رسمی را در `/usr/local/bin/composer` می‌گذارد.
+
+اگر هنوز همان Deprecation Notice را می‌بینید، اسکریپت را از GitHub بگیرید و دوباره Install / Update بزنید. روی سرور می‌توانید دستی هم نصب کنید:
+
+```sh
+sudo php8.4 -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+sudo php8.4 composer-setup.php --install-dir=/usr/local/bin --filename=composer
+sudo rm composer-setup.php
+php8.4 /usr/local/bin/composer --version
+```
 
 ## خطای `phpBolt failed to load in php8.4`
 
