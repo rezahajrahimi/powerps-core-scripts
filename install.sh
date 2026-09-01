@@ -524,28 +524,13 @@ SQL
 }
 
 # ---------------------------------------------------------------------------
-# phpBolt — install only when missing (no re-check loop on update)
+# Legacy phpBolt cleanup (open-source installs no longer need the extension)
 # ---------------------------------------------------------------------------
-pick_bolt_source() {
- local arch
- arch="$(uname -m)"
- case "${arch}" in
-  x86_64|amd64)
-   [ -f "${APP_DIR}/bolt-x86_64.so" ] && echo "${APP_DIR}/bolt-x86_64.so" && return
-   [ -f "${APP_DIR}/bolt.so" ] && echo "${APP_DIR}/bolt.so" && return
-   ;;
-  aarch64|arm64)
-   [ -f "${APP_DIR}/bolt-aarch64.so" ] && echo "${APP_DIR}/bolt-aarch64.so" && return
-   [ -f "${APP_DIR}/bolt.so" ] && echo "${APP_DIR}/bolt.so" && return
-   ;;
-  *)
-   [ -f "${APP_DIR}/bolt.so" ] && echo "${APP_DIR}/bolt.so" && return
-   ;;
- esac
-}
-
-resolve_php_extension_dir() {
- local php_ext_dir
+cleanup_legacy_phpbolt_config() {
+ local php_ext_dir cli_conf_dir apache_conf_dir ini_file
+ cli_conf_dir="/etc/php/${PHP_VERSION}/cli/conf.d"
+ apache_conf_dir="/etc/php/${PHP_VERSION}/apache2/conf.d"
+ ini_file="/etc/php/${PHP_VERSION}/mods-available/bolt.ini"
  php_ext_dir="$(trim_whitespace "$("$(php_bin)" -n -i 2>/dev/null | awk -F'=> ' '/^extension_dir/{print $2; exit}')")"
  if [ -z "${php_ext_dir}" ]; then
   case "${PHP_VERSION}" in
@@ -554,111 +539,29 @@ resolve_php_extension_dir() {
    *) php_ext_dir="/usr/lib/php/${PHP_VERSION}" ;;
   esac
  fi
- echo "${php_ext_dir}"
-}
 
-phpbolt_loaded() {
- "$(php_bin)" -r 'exit(function_exists("bolt_decrypt") ? 0 : 1);' 2>/dev/null
-}
+ if [ ! -f "${cli_conf_dir}/99-bolt.ini" ] \
+  && [ ! -f "${apache_conf_dir}/99-bolt.ini" ] \
+  && [ ! -f "${ini_file}" ] \
+  && [ ! -f "${php_ext_dir}/bolt.so" ] \
+  && [ ! -f "${php_ext_dir} /bolt.so" ]; then
+  return 0
+ fi
 
-cleanup_old_bolt_config() {
- local php_ext_dir cli_conf_dir apache_conf_dir ini_file
- php_ext_dir="$(resolve_php_extension_dir)"
- cli_conf_dir="/etc/php/${PHP_VERSION}/cli/conf.d"
- apache_conf_dir="/etc/php/${PHP_VERSION}/apache2/conf.d"
- ini_file="/etc/php/${PHP_VERSION}/mods-available/bolt.ini"
-
+ log_info "Removing legacy phpBolt configuration..."
  sudo rm -f \
   "${cli_conf_dir}/99-bolt.ini" \
   "${apache_conf_dir}/99-bolt.ini" \
   "${cli_conf_dir}"/*bolt*.ini \
   "${apache_conf_dir}"/*bolt*.ini \
   "${ini_file}" \
-  "${php_ext_dir}/bolt.so" 2>/dev/null || true
+  "${php_ext_dir}/bolt.so" \
+  "${php_ext_dir} /bolt.so" 2>/dev/null || true
  if command -v phpdismod >/dev/null 2>&1; then
   sudo phpdismod -v "${PHP_VERSION}" bolt 2>/dev/null || true
  fi
- # Previous installs could copy bolt.so into a dir with trailing whitespace in the path.
- sudo rm -f "${php_ext_dir} /bolt.so" 2>/dev/null || true
  sudo rmdir "${php_ext_dir} " 2>/dev/null || true
-}
-
-report_phpbolt_load_failure() {
- local php_ext_dir cli_conf_dir err_file="/tmp/powerps-bolt-load.err"
- php_ext_dir="$(resolve_php_extension_dir)"
- cli_conf_dir="/etc/php/${PHP_VERSION}/cli/conf.d"
-
- log_error "phpBolt failed to load in $(php_bin)."
- log_error "--- $(php_bin) startup errors ---"
- [ -f "${err_file}" ] && cat "${err_file}" >&2 || true
- log_error "--- $(php_bin) --ini ---"
- "$(php_bin)" --ini 2>&1 | head -20 >&2 || true
- log_error "--- ${cli_conf_dir}/99-bolt.ini ---"
- cat "${cli_conf_dir}/99-bolt.ini" 2>&1 >&2 || true
- log_error "--- extension file ---"
- ls -la "${php_ext_dir}/bolt.so" 2>&1 >&2 || true
- file "${php_ext_dir}/bolt.so" 2>&1 >&2 || true
- log_error "--- direct load test ---"
- "$(php_bin)" -n -d "extension=${php_ext_dir}/bolt.so" -r 'echo function_exists("bolt_decrypt")?"OK":"FAIL";' 2>&1 >&2 || true
- log_error "Try: sudo bash fix-phpbolt.sh"
- rm -f "${err_file}"
-}
-
-install_phpbolt() {
- if phpbolt_loaded; then
-  log_info "phpBolt already loaded; skipping."
-  return 0
- fi
-
- local bolt_src php_ext_dir cli_conf_dir apache_conf_dir err_file="/tmp/powerps-bolt-load.err"
- bolt_src="$(pick_bolt_source)"
- [ -n "${bolt_src}" ] && [ -f "${bolt_src}" ] || die "bolt.so not found in ${APP_DIR}"
-
- if ! "$(php_bin)" -n -d "extension=${bolt_src}" -r 'exit(function_exists("bolt_decrypt")?0:1);' 2>"${err_file}"; then
-  log_error "bolt binary is incompatible with $(php_bin)."
-  [ -s "${err_file}" ] && cat "${err_file}" >&2 || true
-  rm -f "${err_file}"
-  die "bolt binary is incompatible with $(php_bin). Check: file ${bolt_src} && ldd ${bolt_src}"
- fi
- rm -f "${err_file}"
-
- php_ext_dir="$(resolve_php_extension_dir)"
- cli_conf_dir="/etc/php/${PHP_VERSION}/cli/conf.d"
- apache_conf_dir="/etc/php/${PHP_VERSION}/apache2/conf.d"
-
- log_info "Installing phpBolt from ${bolt_src}..."
- log_info "PHP extension dir: ${php_ext_dir}"
- cleanup_old_bolt_config
-
- sudo mkdir -p "${php_ext_dir}" "${cli_conf_dir}" "${apache_conf_dir}"
- sudo cp "${bolt_src}" "${php_ext_dir}/bolt.so"
- sudo chmod 644 "${php_ext_dir}/bolt.so"
-
- if ! "$(php_bin)" -n -d "extension=${php_ext_dir}/bolt.so" -r 'exit(function_exists("bolt_decrypt")?0:1);' 2>"${err_file}"; then
-  log_error "Copied bolt.so cannot load from ${php_ext_dir}."
-  report_phpbolt_load_failure
-  die "phpBolt copy failed in ${php_ext_dir}."
- fi
- rm -f "${err_file}"
-
- # Relative name — avoids duplicate/conflicting absolute-path ini entries.
- echo "extension=bolt.so" | sudo tee "${cli_conf_dir}/99-bolt.ini" >/dev/null
- echo "extension=bolt.so" | sudo tee "${apache_conf_dir}/99-bolt.ini" >/dev/null
-
- hash -r 2>/dev/null || true
-
- if ! phpbolt_loaded 2>"${err_file}"; then
-  report_phpbolt_load_failure
-  die "phpBolt failed to load in $(php_bin)."
- fi
- rm -f "${err_file}"
-
- if ! php -r 'exit(function_exists("bolt_decrypt") ? 0 : 1);' 2>/dev/null; then
-  log_warn "Default 'php' does not load phpBolt; migrations use $(php_bin) artisan."
- else
-  log_info "Default php loads phpBolt."
- fi
- log_info "phpBolt installed."
+ log_info "Legacy phpBolt configuration removed."
 }
 
 # ---------------------------------------------------------------------------
@@ -1128,11 +1031,9 @@ run_install_or_update() {
  PHP_VERSION="$(detect_php_version)"
  prefer_os_path
  log_info "Target PHP version: ${PHP_VERSION}"
- [ -f "${APP_DIR}/.powerps-bolt-version" ] && \
-  log_info "phpBolt version: $(tr -d '[:space:]' < "${APP_DIR}/.powerps-bolt-version")"
 
  install_php_packages
- install_phpbolt
+ cleanup_legacy_phpbolt_config
  fix_laravel_permissions
  restart_service apache2 2>/dev/null || true
 
@@ -1246,10 +1147,6 @@ run_selftests() {
  local script_dir core_dir
  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
  core_dir="${POWERPS_CORE_DIR:-${script_dir}/../powerps-core}"
- if [ -f "${core_dir}/bolt.so" ] || [ -f "${core_dir}/bolt-x86_64.so" ]; then
-  APP_DIR="${core_dir}"
-  assert "pick_bolt_source finds bolt" "[ -n \"\$(pick_bolt_source)\" ]"
- fi
 
  if [ -f "${core_dir}/composer.json" ]; then
   cp "${core_dir}/composer.json" "${tmpdir}/composer.json"

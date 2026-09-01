@@ -1,6 +1,8 @@
 # PowerPs Core Install Scripts
 
-اسکریپت نصب و به‌روزرسانی خودکار [powerps-core](https://github.com/rezahajrahimi/powerps-core) و [powerps-webapp](https://github.com/rezahajrahimi/powerps-webapp).
+اسکریپت نصب و به‌روزرسانی خودکار [powerps-core](https://github.com/rezahajrahimi/telegram-vpn-seller-bot-v2) (هستهٔ Laravel) و [powerps-webapp](https://github.com/rezahajrahimi/power_ps_front_3) (وب‌اپ Flutter).
+
+> **نسخهٔ Open Source:** سورس هسته دیگر رمزگذاری (phpBolt) نمی‌شود. نصب و به‌روزرسانی مثل یک پروژهٔ Laravel عادی انجام می‌شود.
 
 ## نصب سریع (Ubuntu 24.04)
 
@@ -12,21 +14,11 @@ sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rezahajrahimi/powerps
 
 1. PHP **8.4** و پکیج‌های لازم را نصب می‌کند
 2. Composer **رسمی ۲.۸+** را در `/usr/local/bin/composer` می‌گذارد (بستهٔ `composer` اوبونتو با PHP 8.4 ناسازگار است)
-3. ریپوی [powerps-core](https://github.com/rezahajrahimi/powerps-core) را clone یا update می‌کند
-4. **phpBolt** را از فایل‌های داخل همان ریپو فعال می‌کند
+3. ریپوی هسته را clone یا update می‌کند
+4. در صورت وجود، **پیکربندی قدیمی phpBolt** را از نصب‌های قبلی پاک می‌کند
 5. `composer install --no-dev`، migrate، cron، queue worker و SSL را راه‌اندازی می‌کند
-6. [powerps-webapp](https://github.com/rezahajrahimi/powerps-webapp) را نصب می‌کند
+6. [powerps-webapp](https://github.com/rezahajrahimi/power_ps_front_3) را نصب می‌کند
 7. اگر **Bot Token** یا **Admin ID** در `.env` خالی باشد، از شما می‌پرسد (نصب اولیه و به‌روزرسانی)
-
-## bolt.so از کجا می‌آید؟
-
-روی سرور **دانلود جداگانه ندارد**. فایل‌های زیر داخل ریپوی `powerps-core` commit شده‌اند و با `git clone` / `git pull` روی سرور می‌آیند:
-
-- `bolt.so` (پیش‌فرض x86_64)
-- `bolt-x86_64.so`
-- `bolt-aarch64.so`
-
-اسکریپت نصب فایل مناسب معماری CPU را انتخاب و در مسیر اکستنشن PHP کپی می‌کند. نسخه PHP و phpBolt از فایل‌های `.powerps-php-version` و `.powerps-bolt-version` خوانده می‌شود.
 
 ## گزینه‌های منو
 
@@ -46,7 +38,7 @@ sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rezahajrahimi/powerps
 
 ## به‌روزرسانی
 
-همان دستور نصب را دوباره اجرا کنید و گزینه **Install / Update** را بزنید. اسکریپت `git pull` می‌زند و PHP/phpBolt را با نسخه جدید ریپو هماهنگ می‌کند.
+همان دستور نصب را دوباره اجرا کنید و گزینه **Install / Update** را بزنید. اسکریپت `git pull` می‌زند، وابستگی‌ها را نصب می‌کند و migrate/cache را اجرا می‌کند.
 
 اگر install روی `add-apt-repository` یا `api.launchpad.net` خطا داد، یعنی DNS سرور موقتاً مشکل دارد. PPA از قبل اضافه شده باشد، نسخه جدید install آن مرحله را رد می‌کند.
 
@@ -73,31 +65,23 @@ grep -n '^APP_NAME=' /var/www/html/laravel-app/.env
 
 توکن را می‌توانید همان‌طور که @BotFather می‌دهد (بدون پیشوند `bot`) وارد کنید؛ اسکریپت نصب پیشوند را خودش اضافه می‌کند.
 
-## خطای `bolt_decrypt()` در migrate
+## مهاجرت از نسخهٔ قدیمی (phpBolt)
 
-اگر `php artisan migrate` خطای `Call to undefined function bolt_decrypt()` داد، یعنی **phpBolt برای PHP CLI لود نشده** یا دستور `php` به نسخه اشتباه اشاره می‌کند.
-
-اگر `install.sh` بعد از `Module php8.4 already enabled` متوقف شد، احتمالاً **phpBolt از نصب ناقص قبلی** باعث hang یا crash در PHP CLI شده. اول `fix-phpbolt.sh` را اجرا کنید، بعد دوباره install:
+اگر قبلاً نسخهٔ رمزگذاری‌شده نصب کرده بودید و هنوز خطای `bolt_decrypt()` یا مشکل PHP CLI می‌بینید، پیکربندی قدیمی bolt را پاک کنید و دوباره install بزنید:
 
 ```sh
 sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rezahajrahimi/powerps-core-scripts/refs/heads/main/fix-phpbolt.sh)"
 sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rezahajrahimi/powerps-core-scripts/refs/heads/main/install.sh)" @ install
 ```
 
+`fix-phpbolt.sh` دیگر bolt نصب نمی‌کند؛ فقط ini و `bolt.so` باقی‌مانده از نصب‌های قدیمی را حذف می‌کند.
+
 ```sh
-# تشخیص
-php -v
-php8.4 -m | grep -i bolt
-
-# تعمیر سریع
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rezahajrahimi/powerps-core-scripts/refs/heads/main/fix-phpbolt.sh)"
-
-# migrate
 cd /var/www/html/laravel-app
 php artisan migrate --force
+php artisan config:cache
+php artisan route:cache
 ```
-
-اگر `php -m | grep bolt` خالی بود ولی `php8.4 -m | grep bolt` کار کرد، از `php8.4 artisan migrate --force` استفاده کنید.
 
 لاگ نصب: `/var/log/powerps_install.log`
 
@@ -114,36 +98,6 @@ sudo rm composer-setup.php
 php8.4 /usr/local/bin/composer --version
 ```
 
-## خطای `phpBolt failed to load in php8.4`
-
-معمولاً از **پیکربندی قدیمی bolt** (دو بار لود شدن با `phpenmod` + `99-bolt.ini`) یا ini با مسیر مطلق اشتباه است.
-
-روی سرور:
-
-```sh
-# پاک‌سازی و نصب مجدد bolt
-sudo rm -f /etc/php/8.4/cli/conf.d/*bolt* /etc/php/8.4/apache2/conf.d/*bolt*
-sudo rm -f /etc/php/8.4/mods-available/bolt.ini
-sudo phpdismod -v 8.4 bolt 2>/dev/null || true
-sudo rm -f /usr/lib/php/20240924/bolt.so
-sudo rm -f "/usr/lib/php/20240924 /bolt.so" 2>/dev/null || true
-sudo rmdir "/usr/lib/php/20240924 " 2>/dev/null || true
-
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rezahajrahimi/powerps-core-scripts/refs/heads/main/fix-phpbolt.sh)"
-
-# تست
-php8.4 -r 'var_dump(function_exists("bolt_decrypt"));'   # باید bool(true) باشد
-```
-
-اگر باز هم خطا داد، خروجی این دستورات را بفرستید:
-
-```sh
-file /var/www/html/laravel-app/bolt-x86_64.so
-php8.4 --ini
-cat /etc/php/8.4/cli/conf.d/99-bolt.ini
-php8.4 -r 'var_dump(function_exists("bolt_decrypt"));' 2>&1
-```
-
 ## English
 
 Automated installer for PowerPs Core (Laravel backend) and PowerPs WebApp.
@@ -152,4 +106,4 @@ Automated installer for PowerPs Core (Laravel backend) and PowerPs WebApp.
 sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rezahajrahimi/powerps-core-scripts/refs/heads/main/install.sh)" @ install
 ```
 
-**phpBolt:** bundled inside `powerps-core` repo, copied to PHP extension dir by this script — not downloaded separately.
+**Open Source:** the core is plain Laravel source — no phpBolt extension required. Legacy bolt config from older installs is removed automatically during install/update.

@@ -8,7 +8,7 @@ echo "==> 1/3 Syntax check"
 bash -n install.sh
 bash -n fix-phpbolt.sh
 
-echo "==> 2/3 Built-in self-test (env/composer/bolt helpers)"
+echo "==> 2/3 Built-in self-test (env/composer helpers)"
 POWERPS_SELFTEST=1 \
 POWERPS_CORE_DIR="${POWERPS_CORE_DIR:-${ROOT}/../powerps-core}" \
  bash install.sh
